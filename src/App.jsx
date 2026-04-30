@@ -299,15 +299,25 @@ export default function App() {
     const newPitcher = pitchers.find(p => p.id.toString() === rawId);
     if (newPitcher) {
       setGameState(prev => {
-        let newLogs = [...prev.logs];
-        newLogs.unshift(`[투수 교체] ${prev[teamKey].name} : ${prev[teamKey].pitcher.name} → ${newPitcher.name}`);
+        const safePrev = normalizeGameStateForTracking(prev);
+        let newLogs = [...safePrev.logs];
+        newLogs.unshift(`[투수 교체] ${safePrev[teamKey].name} : ${safePrev[teamKey].pitcher.name} → ${newPitcher.name}`);
         return {
-          ...prev,
+          ...safePrev,
           logs: newLogs,
           [teamKey]: {
-            ...prev[teamKey],
+            ...safePrev[teamKey],
             pitcher: newPitcher,
-            pitcherId: newPitcherIdRaw
+            pitcherId: newPitcherIdRaw,
+            pitcherAppearances: [
+              ...safePrev[teamKey].pitcherAppearances,
+              {
+                pitcherId: newPitcher.id,
+                pitcherName: newPitcher.name,
+                uniformNumber: newPitcher.uniformNumber,
+                stats: { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, errorRuns: 0 }
+              }
+            ]
           }
         };
       });
@@ -416,8 +426,7 @@ export default function App() {
       let newBases = [...state.bases];
       let newScore = state[battingTeam].score;
       let runsScored = 0;
-      let earnedRunsToAdd = 0;
-      let countAsAtBat = !['볼넷', '사구'].includes(actionLabel);
+      let countAsAtBat = !['볼넷', '사구', '희생번트', '희생플라이'].includes(actionLabel);
       let countAsHit = ['안타', '2루타', '3루타', '홈런'].includes(actionLabel);
       let plateUpdates = {
         label: actionLabel,
@@ -429,10 +438,26 @@ export default function App() {
         homeRuns: actionLabel === '홈런' ? 1 : 0,
         walks: ['볼넷', '사구'].includes(actionLabel) ? 1 : 0,
         strikeouts: actionLabel === '삼진' ? 1 : 0,
+        sacrifices: ['희생번트', '희생플라이'].includes(actionLabel) ? 1 : 0,
+        sacFlies: actionLabel === '희생플라이' ? 1 : 0,
+        sacBunts: actionLabel === '희생번트' ? 1 : 0,
         rbi: 0,
         runs: 0,
         steals: 0,
         errors: 0
+      };
+      let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
+      const consumeUnearned = (earnedCandidate) => {
+        const credits = state.unearnedRunCredits[battingTeam] || 0;
+        const unearnedUsed = Math.min(credits, earnedCandidate);
+        state = {
+          ...state,
+          unearnedRunCredits: {
+            ...state.unearnedRunCredits,
+            [battingTeam]: credits - unearnedUsed
+          }
+        };
+        return earnedCandidate - unearnedUsed;
       };
 
       if (actionLabel.startsWith('실책-')) {
@@ -440,44 +465,96 @@ export default function App() {
         plateUpdates.label = `${position} 실책`;
         plateUpdates.atBats = 1;
         state = incrementDefenseError(state, defenseTeam, position);
+        state = {
+          ...state,
+          unearnedRunCredits: {
+            ...state.unearnedRunCredits,
+            [battingTeam]: (state.unearnedRunCredits[battingTeam] || 0) + 1
+          }
+        };
         newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${position} 실책으로 출루`);
         newPlayEvents.unshift(`${position} 실책`);
 
-        let runnersOn = newBases.map((r, i) => r ? i + 1 : 0).filter(v => v > 0);
+        const runnersOn = newBases.map((r, i) => r ? { runner: r, base: i + 1 } : null).filter(Boolean);
         newBases = [null, null, null];
-        runnersOn.forEach(base => {
-          let nextBase = base + 1;
+        runnersOn.forEach(({ runner, base }) => {
+          const nextBase = base + 1;
           if (nextBase > 3) {
             runsScored++;
+            pitchingDelta.errorRuns += 1;
           } else {
-            newBases[nextBase - 1] = '주자';
+            newBases[nextBase - 1] = runner;
           }
         });
         newBases[0] = currentBatter?.name || '타자';
+      } else if (actionLabel === '희생번트') {
+        newOuts += 1;
+        pitchingDelta.inningsOuts += 1;
+        const runnersOn = newBases.map((r, i) => r ? { runner: r, base: i + 1 } : null).filter(Boolean);
+        newBases = [null, null, null];
+        runnersOn.forEach(({ runner, base }) => {
+          const nextBase = base + 1;
+          if (nextBase > 3) {
+            runsScored++;
+          } else {
+            newBases[nextBase - 1] = runner;
+          }
+        });
+        plateUpdates.label = '희번';
+        plateUpdates.rbi = runsScored;
+        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 희생번트${runsScored > 0 ? ` (+${runsScored}득점)` : ''}`);
+        newPlayEvents.unshift(`${currentBatter?.name || '타자'} 희생번트`);
+      } else if (actionLabel === '희생플라이') {
+        newOuts += 1;
+        pitchingDelta.inningsOuts += 1;
+        const third = newBases[2];
+        const second = newBases[1];
+        const first = newBases[0];
+        newBases = [null, null, null];
+        if (third) runsScored += 1;
+        if (second) newBases[2] = second;
+        if (first) newBases[1] = first;
+        plateUpdates.label = '희비';
+        plateUpdates.rbi = third ? 1 : 0;
+        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 희생플라이${runsScored > 0 ? ' (+1득점)' : ''}`);
+        newPlayEvents.unshift(`${currentBatter?.name || '타자'} 희생플라이`);
       } else if (isOut) {
         newOuts += 1;
+        pitchingDelta.inningsOuts += 1;
+        if (actionLabel === '삼진') pitchingDelta.strikeouts += 1;
         newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - ${actionLabel}`);
         newPlayEvents.unshift(`${currentBatter?.name || '타자'} ${actionLabel}`);
       } else {
-        let runnersOn = newBases.map((r, i) => r ? i + 1 : 0).filter(v => v > 0);
+        const runnersOn = newBases.map((r, i) => r ? { runner: r, base: i + 1 } : null).filter(Boolean);
         newBases = [null, null, null];
 
-        runnersOn.forEach(base => {
-          let nextBase = base + basesToAdvance;
-          if (nextBase > 3) {
-            runsScored++;
-            earnedRunsToAdd++;
-          } else {
-            newBases[nextBase - 1] = '주자';
-          }
-        });
-
-        if (basesToAdvance > 3) {
-          runsScored++;
-          earnedRunsToAdd++;
-          plateUpdates.runs = 1;
+        if (actionLabel === '볼넷' || actionLabel === '사구') {
+          const occupied = [state.bases[0], state.bases[1], state.bases[2]];
+          const third = occupied[2];
+          const second = occupied[1];
+          const first = occupied[0];
+          if (first && second && third) runsScored += 1;
+          newBases[2] = second && first ? second : third;
+          newBases[1] = first ? first : second;
+          newBases[0] = currentBatter?.name || '타자';
+          pitchingDelta.walksAllowed += 1;
         } else {
-          newBases[basesToAdvance - 1] = currentBatter?.name || '타자';
+          runnersOn.forEach(({ runner, base }) => {
+            const nextBase = base + basesToAdvance;
+            if (nextBase > 3) {
+              runsScored++;
+            } else {
+              newBases[nextBase - 1] = runner;
+            }
+          });
+
+          if (basesToAdvance > 3) {
+            runsScored++;
+            plateUpdates.runs = 1;
+          } else {
+            newBases[basesToAdvance - 1] = currentBatter?.name || '타자';
+          }
+          if (countAsHit) pitchingDelta.hitsAllowed += 1;
         }
 
         newScore += runsScored;
@@ -486,18 +563,14 @@ export default function App() {
         newPlayEvents.unshift(`${currentBatter?.name || '타자'} ${actionLabel}`);
       }
 
-      state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
+      const earnedRunsToAdd = consumeUnearned(runsScored);
+      pitchingDelta.runsAllowed += runsScored;
+      pitchingDelta.earnedRuns += earnedRunsToAdd;
+      if (runsScored > earnedRunsToAdd) pitchingDelta.errorRuns += (runsScored - earnedRunsToAdd);
+      plateUpdates.rbi = runsScored;
 
-      const nextPitcherStats = {
-        ...state[defenseTeam].pitcherGameStats,
-        battersFaced: (state[defenseTeam].pitcherGameStats.battersFaced || 0) + 1,
-        strikeouts: (state[defenseTeam].pitcherGameStats.strikeouts || 0) + (actionLabel === '삼진' ? 1 : 0),
-        hitsAllowed: (state[defenseTeam].pitcherGameStats.hitsAllowed || 0) + (countAsHit ? 1 : 0),
-        walksAllowed: (state[defenseTeam].pitcherGameStats.walksAllowed || 0) + (['볼넷', '사구'].includes(actionLabel) ? 1 : 0),
-        runsAllowed: (state[defenseTeam].pitcherGameStats.runsAllowed || 0) + runsScored,
-        earnedRuns: (state[defenseTeam].pitcherGameStats.earnedRuns || 0) + earnedRunsToAdd,
-        inningsOuts: (state[defenseTeam].pitcherGameStats.inningsOuts || 0) + (isOut ? 1 : 0)
-      };
+      state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
+      state = applyPitchingEvent(state, defenseTeam, pitchingDelta);
 
       let nextSummary = {
         ...state.summary,
@@ -511,9 +584,7 @@ export default function App() {
       };
 
       let newBatterIndex = state[battingTeam].batterIndex;
-      if (state[battingTeam].lineup.length > 0) {
-        newBatterIndex = (newBatterIndex + 1) % state[battingTeam].lineup.length;
-      }
+      if (state[battingTeam].lineup.length > 0) newBatterIndex = (newBatterIndex + 1) % state[battingTeam].lineup.length;
 
       state = {
         ...state,
@@ -526,10 +597,6 @@ export default function App() {
           ...state[battingTeam],
           score: newScore,
           batterIndex: newBatterIndex
-        },
-        [defenseTeam]: {
-          ...state[defenseTeam],
-          pitcherGameStats: nextPitcherStats
         }
       };
 
@@ -775,8 +842,18 @@ export default function App() {
 
   const calculateBattingAverage = (hits, atBats) => (atBats > 0 ? (hits / atBats).toFixed(3) : '0.000');
 
-  const calculateEra = (earnedRuns, innings) => {
-    const ip = Number(innings) || 0;
+  const parseBaseballInningsToOuts = (inningsValue) => {
+    const raw = String(inningsValue ?? 0);
+    if (!raw.includes('.')) return (parseInt(raw, 10) || 0) * 3;
+    const [whole, decimal] = raw.split('.');
+    return ((parseInt(whole, 10) || 0) * 3) + (parseInt(decimal, 10) || 0);
+  };
+
+  const outsToBaseballInnings = (outs) => `${Math.floor((outs || 0) / 3)}.${(outs || 0) % 3}`;
+
+  const calculateEra = (earnedRuns, inningsOrOuts) => {
+    const outs = Number.isInteger(inningsOrOuts) ? inningsOrOuts : parseBaseballInningsToOuts(inningsOrOuts);
+    const ip = outs / 3;
     if (ip <= 0) return '0.00';
     return ((earnedRuns * 9) / ip).toFixed(2);
   };
@@ -785,31 +862,11 @@ export default function App() {
   const getDefenseTeamKeyByHalf = (half) => (half === 'top' ? 'teamB' : 'teamA');
 
   const normalizeGameStateForTracking = (state) => {
-    const ensureTeam = (team) => ({
-      ...team,
-      score: team?.score || 0,
-      batterIndex: team?.batterIndex || 0,
-      lineup: (team?.lineup || []).map(player => ({
-        ...player,
-        gameStats: {
-          pa: 0,
-          atBats: 0,
-          hits: 0,
-          singles: 0,
-          doubles: 0,
-          triples: 0,
-          homeRuns: 0,
-          rbi: 0,
-          runs: 0,
-          walks: 0,
-          strikeouts: 0,
-          steals: 0,
-          errors: 0,
-          resultByInning: {}
-        },
-        defensiveErrors: 0
-      })),
-      pitcherGameStats: {
+    const createPitchingLine = (pitcher) => ({
+      pitcherId: pitcher?.id || null,
+      pitcherName: pitcher?.name || '미정',
+      uniformNumber: pitcher?.uniformNumber || '',
+      stats: {
         inningsOuts: 0,
         strikeouts: 0,
         runsAllowed: 0,
@@ -821,11 +878,60 @@ export default function App() {
       }
     });
 
+    const ensureTeam = (team) => {
+      const totalPitching = team?.pitcherGameStats || {
+        inningsOuts: 0,
+        strikeouts: 0,
+        runsAllowed: 0,
+        earnedRuns: 0,
+        hitsAllowed: 0,
+        walksAllowed: 0,
+        battersFaced: 0,
+        errorRuns: 0
+      };
+      const pitcherAppearances = team?.pitcherAppearances?.length
+        ? team.pitcherAppearances
+        : (team?.pitcher ? [createPitchingLine(team.pitcher)] : []);
+
+      return {
+        ...team,
+        score: team?.score || 0,
+        batterIndex: team?.batterIndex || 0,
+        lineup: (team?.lineup || []).map(player => ({
+          ...player,
+          gameStats: {
+            pa: 0,
+            atBats: 0,
+            hits: 0,
+            singles: 0,
+            doubles: 0,
+            triples: 0,
+            homeRuns: 0,
+            rbi: 0,
+            runs: 0,
+            walks: 0,
+            strikeouts: 0,
+            steals: 0,
+            sacrifices: 0,
+            sacFlies: 0,
+            sacBunts: 0,
+            errors: 0,
+            resultByInning: {},
+            ...(player.gameStats || {})
+          },
+          defensiveErrors: player.defensiveErrors || 0
+        })),
+        pitcherGameStats: totalPitching,
+        pitcherAppearances
+      };
+    };
+
     return {
       ...state,
       teamA: ensureTeam(state.teamA),
       teamB: ensureTeam(state.teamB),
       inningScores: state.inningScores || {},
+      unearnedRunCredits: state.unearnedRunCredits || { teamA: 0, teamB: 0 },
       summary: state.summary || {
         teamA: { hits: 0, homeRuns: 0, steals: 0, strikeouts: 0, errors: 0, walks: 0 },
         teamB: { hits: 0, homeRuns: 0, steals: 0, strikeouts: 0, errors: 0, walks: 0 }
@@ -854,7 +960,8 @@ export default function App() {
   });
 
   const updatePitcherSeasonStats = (pitcher, gameStats, isWinningPitcher, isLosingPitcher) => {
-    const nextInnings = (pitcher.innings || 0) + Number((gameStats.inningsOuts / 3).toFixed(1));
+    const nextOuts = parseBaseballInningsToOuts(pitcher.innings || 0) + (gameStats.inningsOuts || 0);
+    const nextInnings = outsToBaseballInnings(nextOuts);
     const nextEarnedRuns = (pitcher.earnedRuns || 0) + gameStats.earnedRuns;
     return {
       ...pitcher,
@@ -868,7 +975,35 @@ export default function App() {
       hitsAllowed: (pitcher.hitsAllowed || 0) + gameStats.hitsAllowed,
       walksAllowed: (pitcher.walksAllowed || 0) + gameStats.walksAllowed,
       battersFaced: (pitcher.battersFaced || 0) + gameStats.battersFaced,
-      era: calculateEra(nextEarnedRuns, nextInnings)
+      era: calculateEra(nextEarnedRuns, nextOuts)
+    };
+  };
+
+  const applyPitchingEvent = (state, defenseTeam, delta) => {
+    const currentPitcherId = state[defenseTeam]?.pitcher?.id;
+    const updateStats = (stats) => ({
+      ...stats,
+      inningsOuts: (stats.inningsOuts || 0) + (delta.inningsOuts || 0),
+      strikeouts: (stats.strikeouts || 0) + (delta.strikeouts || 0),
+      runsAllowed: (stats.runsAllowed || 0) + (delta.runsAllowed || 0),
+      earnedRuns: (stats.earnedRuns || 0) + (delta.earnedRuns || 0),
+      hitsAllowed: (stats.hitsAllowed || 0) + (delta.hitsAllowed || 0),
+      walksAllowed: (stats.walksAllowed || 0) + (delta.walksAllowed || 0),
+      battersFaced: (stats.battersFaced || 0) + (delta.battersFaced || 0),
+      errorRuns: (stats.errorRuns || 0) + (delta.errorRuns || 0)
+    });
+
+    return {
+      ...state,
+      [defenseTeam]: {
+        ...state[defenseTeam],
+        pitcherGameStats: updateStats(state[defenseTeam].pitcherGameStats),
+        pitcherAppearances: state[defenseTeam].pitcherAppearances.map(appearance =>
+          appearance.pitcherId === currentPitcherId
+            ? { ...appearance, stats: updateStats(appearance.stats) }
+            : appearance
+        )
+      }
     };
   };
 
@@ -904,14 +1039,17 @@ export default function App() {
       let updated = pitcher;
       ['teamA', 'teamB'].forEach(teamKey => {
         if (!teamKeyToSeasonUpdater(teamKey)) return;
-        if (finishedState[teamKey]?.pitcher?.id === pitcher.id) {
-          updated = updatePitcherSeasonStats(
-            updated,
-            finishedState[teamKey].pitcherGameStats,
-            winningTeamKey === teamKey,
-            losingTeamKey === teamKey
-          );
-        }
+        const appearances = finishedState[teamKey]?.pitcherAppearances || [];
+        appearances.forEach((appearance, idx) => {
+          if (appearance.pitcherId === pitcher.id) {
+            updated = updatePitcherSeasonStats(
+              updated,
+              appearance.stats,
+              winningTeamKey === teamKey && idx === 0,
+              losingTeamKey === teamKey && idx === 0
+            );
+          }
+        });
       });
       return updated;
     }));
@@ -930,6 +1068,11 @@ export default function App() {
       const opponentSummary = finishedState.summary[opponentTeamKey];
       const polarisPitcher = finishedState[polarisTeamKey].pitcher;
       const polarisPitcherStats = finishedState[polarisTeamKey].pitcherGameStats;
+      const polarisPitchers = (finishedState[polarisTeamKey].pitcherAppearances || []).map(appearance => ({
+        name: appearance.pitcherName,
+        uniformNumber: appearance.uniformNumber,
+        ...appearance.stats
+      }));
 
       const detailPayload = {
         inningScores: finishedState.inningScores,
@@ -950,6 +1093,7 @@ export default function App() {
           uniformNumber: polarisPitcher?.uniformNumber,
           ...polarisPitcherStats
         },
+        pitchers: polarisPitchers,
         officials: {
           recorder: 'Polaris Record Mode'
         },
@@ -1129,13 +1273,17 @@ export default function App() {
 
               <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
                 <h4 className="text-xl font-black text-gray-800 mb-4">우리 투수 기록</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">투수</p><p className="font-black text-lg text-gray-800">{detail.pitcher.name}</p></div>
-                  <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">이닝</p><p className="font-black text-lg text-gray-800">{(detail.pitcher.inningsOuts / 3).toFixed(1)}</p></div>
-                  <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">실점</p><p className="font-black text-lg text-gray-800">{detail.pitcher.runsAllowed}</p></div>
-                  <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">자책점</p><p className="font-black text-lg text-gray-800">{detail.pitcher.earnedRuns}</p></div>
-                  <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">피안타</p><p className="font-black text-lg text-gray-800">{detail.pitcher.hitsAllowed}</p></div>
-                  <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">볼넷</p><p className="font-black text-lg text-gray-800">{detail.pitcher.walksAllowed}</p></div>
+                <div className="space-y-4">
+                  {(detail.pitchers?.length ? detail.pitchers : [detail.pitcher]).map((pitcherRow, idx) => (
+                    <div key={`${pitcherRow.name}-${idx}`} className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm">
+                      <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">투수</p><p className="font-black text-lg text-gray-800">{pitcherRow.name}</p></div>
+                      <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">이닝</p><p className="font-black text-lg text-gray-800">{outsToBaseballInnings(pitcherRow.inningsOuts || 0)}</p></div>
+                      <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">실점</p><p className="font-black text-lg text-gray-800">{pitcherRow.runsAllowed}</p></div>
+                      <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">자책점</p><p className="font-black text-lg text-gray-800">{pitcherRow.earnedRuns}</p></div>
+                      <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">피안타</p><p className="font-black text-lg text-gray-800">{pitcherRow.hitsAllowed}</p></div>
+                      <div className="bg-gray-50 rounded-xl p-4"><p className="text-gray-500">볼넷</p><p className="font-black text-lg text-gray-800">{pitcherRow.walksAllowed}</p></div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1901,6 +2049,8 @@ export default function App() {
                 <button onClick={() => handleGameAction('삼진', true, 0)} className="bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-xl shadow transition-colors mt-4">삼진 (K)</button>
                 <button onClick={() => handleGameAction('볼넷', false, 1)} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-4">볼넷</button>
                 <button onClick={() => handleGameAction('사구', false, 1)} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-4">사구</button>
+                <button onClick={() => handleGameAction('희생번트', true, 0)} className="bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-4">희생번트</button>
+                <button onClick={() => handleGameAction('희생플라이', true, 0)} className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-4">희생플라이</button>
                 <div className="grid grid-cols-2 gap-2 mt-4">
                   {['투수','포수','1루수','2루수','3루수','유격수','좌익수','중견수','우익수'].map(pos => (
                     <button key={pos} onClick={() => handleGameAction(`실책-${pos}`, false, 1)} className="bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-3 rounded-xl border border-amber-300 transition-colors text-sm">
