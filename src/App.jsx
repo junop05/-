@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon } from 'lucide-react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon, ZoomIn, ZoomOut, Save } from 'lucide-react';
 
 const POSITIONS = ['투수', '포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수', '지명타자'];
 
@@ -25,7 +25,15 @@ export default function App() {
   const [galleryPosts, setGalleryPosts] = useState([]);
   const [playerPhotos, setPlayerPhotos] = useState({});
   const [selectedGameResult, setSelectedGameResult] = useState(null);
+  
   const [customBackground, setCustomBackground] = useState('/background.JPG');
+  
+  // 크롭 방식 배경화면 상태 (배율 및 X, Y 퍼센트)
+  const [bgSettings, setBgSettings] = useState({ scale: 1, posX: 50, posY: 50 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [pinchDist, setPinchDist] = useState(null);
+  const bgContainerRef = useRef(null);
 
   const [batters, setBatters] = useState([
     { id: 1, name: '김타자', uniformNumber: 15, position: '중견수', games: 120, atBats: 400, runs: 80, hits: 120, homeRuns: 20, rbi: 75, walks: 0, steals: 0, errors: 0, avg: '0.300', career: { games: 580, atBats: 1900, runs: 350, hits: 540, homeRuns: 85, rbi: 320, avg: '0.284' } },
@@ -127,6 +135,9 @@ export default function App() {
     }
   };
 
+  // ----------------------------------------------------
+  // 배경 화면 설정 및 조작 관련 로직
+  // ----------------------------------------------------
   const handleBackgroundUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -134,13 +145,15 @@ export default function App() {
     try {
       const imageUrl = await fileToDataUrl(file);
       setCustomBackground(imageUrl);
+      setBgSettings({ scale: 1, posX: 50, posY: 50 }); // 새 이미지 업로드 시 중앙, 1배율 초기화
       await putMediaItem({
         key: 'background:current',
         type: 'background',
         imageUrl,
+        settings: { scale: 1, posX: 50, posY: 50 },
         updatedAt: Date.now()
       });
-      alert('배경 화면이 성공적으로 변경되었습니다.');
+      alert('새로운 배경 사진이 업로드되었습니다. 위치와 크기를 조절한 후 저장해주세요.');
     } catch (error) {
       console.error('배경 화면 저장 실패', error);
       alert('배경 화면 저장 중 오류가 발생했습니다.');
@@ -148,14 +161,92 @@ export default function App() {
     e.target.value = '';
   };
 
+  const saveBackgroundSettings = async () => {
+    await putMediaItem({
+      key: 'background:current',
+      type: 'background',
+      imageUrl: customBackground,
+      settings: bgSettings,
+      updatedAt: Date.now()
+    });
+    alert('배경 화면 위치 및 크기가 성공적으로 저장되었습니다.');
+  };
+
   const resetBackground = async () => {
+    const defaultSettings = { scale: 1, posX: 50, posY: 50 };
     setCustomBackground('/background.JPG');
+    setBgSettings(defaultSettings);
     await putMediaItem({
       key: 'background:current',
       type: 'background',
       imageUrl: '/background.JPG',
+      settings: defaultSettings,
       updatedAt: Date.now()
     });
+  };
+
+  // 최소 1배율 고정 (회색 테두리 방지)
+  const handleZoomIn = () => setBgSettings(prev => ({ ...prev, scale: Math.min(prev.scale + 0.1, 5) }));
+  const handleZoomOut = () => setBgSettings(prev => ({ ...prev, scale: Math.max(prev.scale - 0.1, 1) }));
+
+  const handleTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      setPinchDist(dist);
+    } else if (e.touches.length === 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (e.touches.length === 2 && pinchDist !== null) {
+      // 핀치 줌
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      const delta = dist - pinchDist;
+      setBgSettings(prev => ({ ...prev, scale: Math.max(1, Math.min(prev.scale + delta * 0.01, 5)) }));
+      setPinchDist(dist);
+    } else if (e.touches.length === 1 && isDragging && bgContainerRef.current) {
+      // 위치 드래그
+      const { width, height } = bgContainerRef.current.getBoundingClientRect();
+      const moveX = ((e.touches[0].clientX - dragStart.x) / width) * 100 / bgSettings.scale;
+      const moveY = ((e.touches[0].clientY - dragStart.y) / height) * 100 / bgSettings.scale;
+      
+      setBgSettings(prev => ({
+        ...prev,
+        posX: Math.min(Math.max(prev.posX - moveX, 0), 100),
+        posY: Math.min(Math.max(prev.posY - moveY, 0), 100)
+      }));
+      setDragStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+    setPinchDist(null);
+  };
+
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging || !bgContainerRef.current) return;
+    const { width, height } = bgContainerRef.current.getBoundingClientRect();
+    const moveX = ((e.clientX - dragStart.x) / width) * 100 / bgSettings.scale;
+    const moveY = ((e.clientY - dragStart.y) / height) * 100 / bgSettings.scale;
+
+    setBgSettings(prev => ({
+      ...prev,
+      posX: Math.min(Math.max(prev.posX - moveX, 0), 100),
+      posY: Math.min(Math.max(prev.posY - moveY, 0), 100)
+    }));
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
   };
 
   // ----------------------------------------------------
@@ -874,10 +965,19 @@ export default function App() {
             return acc;
           }, {});
 
-        // 배경 사진 로드
+        // 배경 사진 및 설정 로드
         const loadedBackground = items.find(item => item.key === 'background:current');
-        if (loadedBackground && loadedBackground.imageUrl !== '/background.JPG') {
-          setCustomBackground(loadedBackground.imageUrl);
+        if (loadedBackground) {
+          if (loadedBackground.imageUrl && loadedBackground.imageUrl !== '/background.JPG') {
+            setCustomBackground(loadedBackground.imageUrl);
+          }
+          if (loadedBackground.settings) {
+            setBgSettings({
+              scale: loadedBackground.settings.scale ?? 1,
+              posX: loadedBackground.settings.posX ?? 50,
+              posY: loadedBackground.settings.posY ?? 50
+            });
+          }
         }
 
         setGalleryPosts(loadedGalleryPosts);
@@ -1015,9 +1115,450 @@ export default function App() {
     };
   };
 
-  // ----------------------------------------------------
-  // 각 화면 렌더링
-  // ----------------------------------------------------
+  const finalizeAndPersistGameStats = (finishedState) => {
+    if (!finishedState) return;
+
+    const polarisTeamKey = finishedState.mode === 'regular_play'
+      ? (finishedState.venue === 'home' ? 'teamB' : 'teamA')
+      : null;
+    const opponentTeamKey = finishedState.mode === 'regular_play'
+      ? (polarisTeamKey === 'teamA' ? 'teamB' : 'teamA')
+      : null;
+
+    const winningTeamKey = finishedState.teamA.score > finishedState.teamB.score ? 'teamA' : finishedState.teamB.score > finishedState.teamA.score ? 'teamB' : null;
+    const losingTeamKey = winningTeamKey === 'teamA' ? 'teamB' : winningTeamKey === 'teamB' ? 'teamA' : null;
+
+    const teamKeyToSeasonUpdater = (teamKey) => {
+      if (finishedState.mode === 'scrimmage_play') return true;
+      return teamKey === polarisTeamKey;
+    };
+
+    setBatters(prev => prev.map(player => {
+      let updated = player;
+      ['teamA', 'teamB'].forEach(teamKey => {
+        if (!teamKeyToSeasonUpdater(teamKey)) return;
+        const found = finishedState[teamKey].lineup.find(p => p.id === player.id && !String(p.id).startsWith('p-'));
+        if (found?.gameStats) updated = updateBatterSeasonStats(updated, found.gameStats);
+      });
+      return updated;
+    }));
+
+    setPitchers(prev => prev.map(pitcher => {
+      let updated = pitcher;
+      ['teamA', 'teamB'].forEach(teamKey => {
+        if (!teamKeyToSeasonUpdater(teamKey)) return;
+        const appearances = finishedState[teamKey]?.pitcherAppearances || [];
+        appearances.forEach((appearance, idx) => {
+          if (appearance.pitcherId === pitcher.id) {
+            updated = updatePitcherSeasonStats(
+              updated,
+              appearance.stats,
+              winningTeamKey === teamKey && idx === 0,
+              losingTeamKey === teamKey && idx === 0
+            );
+          }
+        });
+      });
+      return updated;
+    }));
+
+    const isRegular = finishedState.mode === 'regular_play';
+    const opponentName = isRegular ? (finishedState.opponentName?.trim() || '상대팀') : '자체 청백전';
+    const home = isRegular ? (finishedState.venue === 'home' ? '폴라리스' : opponentName) : '백팀';
+    const away = isRegular ? (finishedState.venue === 'home' ? opponentName : '폴라리스') : '청팀';
+    const homeScore = finishedState.teamB.score;
+    const awayScore = finishedState.teamA.score;
+    
+    let result = '무';
+    if (isRegular) {
+      const polarisScore = finishedState.venue === 'home' ? homeScore : awayScore;
+      const opponentScore = finishedState.venue === 'home' ? awayScore : homeScore;
+      result = polarisScore > opponentScore ? '승' : polarisScore < opponentScore ? '패' : '무';
+    } else {
+      result = '-';
+    }
+    
+    const today = new Date().toISOString().slice(0, 10);
+    const viewTeamKey = isRegular ? polarisTeamKey : 'teamA';
+    const polarisSummary = finishedState.summary[viewTeamKey];
+    const opponentSummary = finishedState.summary[isRegular ? opponentTeamKey : 'teamB'];
+    const polarisPitcher = finishedState[viewTeamKey].pitcher;
+    const polarisPitcherStats = finishedState[viewTeamKey].pitcherGameStats;
+    const polarisPitchers = (finishedState[viewTeamKey].pitcherAppearances || []).map(appearance => ({
+      name: appearance.pitcherName,
+      uniformNumber: appearance.uniformNumber,
+      ...appearance.stats
+    }));
+
+    const detailPayload = {
+      inningScores: finishedState.inningScores,
+      summary: finishedState.summary,
+      opponentName,
+      venue: finishedState.venue,
+      playEvents: finishedState.playEvents,
+      lineup: finishedState[viewTeamKey].lineup.map((player, index) => ({
+        order: index + 1,
+        position: player.assignedPosition || player.position,
+        name: player.name,
+        uniformNumber: player.uniformNumber,
+        ...player.gameStats,
+        seasonAvg: player.avg
+      })),
+      pitcher: {
+        name: polarisPitcher?.name,
+        uniformNumber: polarisPitcher?.uniformNumber,
+        ...polarisPitcherStats
+      },
+      pitchers: polarisPitchers,
+      officials: { recorder: 'Polaris Record Mode' },
+      scoreboard: {
+        polaris: isRegular ? (finishedState.venue === 'home' ? homeScore : awayScore) : awayScore,
+        opponent: isRegular ? (finishedState.venue === 'home' ? awayScore : homeScore) : homeScore,
+        home, away, homeScore, awayScore
+      },
+      statBars: [
+        { label: '안타', left: opponentSummary.hits, right: polarisSummary.hits },
+        { label: '홈런', left: opponentSummary.homeRuns, right: polarisSummary.homeRuns },
+        { label: '도루', left: opponentSummary.steals, right: polarisSummary.steals },
+        { label: '삼진', left: opponentSummary.strikeouts, right: polarisSummary.strikeouts },
+        { label: '실책', left: opponentSummary.errors, right: polarisSummary.errors },
+        { label: '사사구', left: opponentSummary.walks, right: polarisSummary.walks }
+      ]
+    };
+
+    setGameResults(prev => ([
+      {
+        id: Date.now(),
+        date: today,
+        opponent: opponentName,
+        home, away, homeScore, awayScore, result,
+        detail: detailPayload
+      },
+      ...prev
+    ]));
+
+    setActiveTab('records');
+  };
+
+  const advanceInningScore = (state, battingTeamKey, runsScored) => {
+    if (!runsScored) return state;
+    const key = `${state.inning}-${state.half}`;
+    return {
+      ...state,
+      inningScores: {
+        ...state.inningScores,
+        [key]: {
+          ...(state.inningScores[key] || { teamA: 0, teamB: 0 }),
+          [battingTeamKey]: ((state.inningScores[key] || { teamA: 0, teamB: 0 })[battingTeamKey] || 0) + runsScored
+        }
+      }
+    };
+  };
+
+  const registerPlateAppearance = (state, battingTeamKey, currentBatter, updates) => {
+    const nextTeam = { ...state[battingTeamKey] };
+    nextTeam.lineup = nextTeam.lineup.map(player => {
+      if (player.id !== currentBatter.id) return player;
+      const gameStats = {
+        ...player.gameStats,
+        ...updates,
+        pa: (player.gameStats.pa || 0) + 1,
+        resultByInning: {
+          ...player.gameStats.resultByInning,
+          [`${state.inning}`]: [...(player.gameStats.resultByInning?.[`${state.inning}`] || []), updates.label || '']
+        }
+      };
+      return { ...player, gameStats };
+    });
+    return { ...state, [battingTeamKey]: nextTeam };
+  };
+
+  const incrementDefenseError = (state, defenseTeamKey, position) => {
+    const target = getPlayerByPosition(state[defenseTeamKey], position);
+    const nextTeam = { ...state[defenseTeamKey] };
+    nextTeam.lineup = nextTeam.lineup.map(player => {
+      if (!target || player.id !== target.id) return player;
+      return {
+        ...player,
+        gameStats: { ...player.gameStats, errors: (player.gameStats.errors || 0) + 1 },
+        defensiveErrors: (player.defensiveErrors || 0) + 1
+      };
+    });
+    return {
+      ...state,
+      [defenseTeamKey]: nextTeam,
+      summary: {
+        ...state.summary,
+        [defenseTeamKey]: { ...state.summary[defenseTeamKey], errors: (state.summary[defenseTeamKey]?.errors || 0) + 1 }
+      }
+    };
+  };
+
+  const renderInningBox = (detail) => {
+    const innings = Array.from({ length: 9 }, (_, i) => i + 1);
+    return (
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="bg-gray-50 text-gray-600">
+            <th className="p-3 border">Team</th>
+            {innings.map(inning => <th key={inning} className="p-3 border">{inning}</th>)}
+            <th className="p-3 border">R</th>
+            <th className="p-3 border">H</th>
+            <th className="p-3 border">E</th>
+            <th className="p-3 border">B</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[
+            { label: detail.scoreboard.away, key: 'teamA' },
+            { label: detail.scoreboard.home, key: 'teamB' }
+          ].map((row, idx) => {
+            const teamKey = row.key;
+            const runs = idx === 0 ? detail.scoreboard.awayScore : detail.scoreboard.homeScore;
+            const teamSummary = detail.summary[teamKey] || { hits: 0, errors: 0, walks: 0 };
+            return (
+              <tr key={row.label}>
+                <td className="p-3 border font-bold text-center">{row.label}</td>
+                {innings.map(inning => {
+                  const halfKey = teamKey === 'teamA' ? `${inning}-top` : `${inning}-bottom`;
+                  const value = detail.inningScores?.[halfKey]?.[teamKey] ?? '';
+                  return <td key={halfKey} className="p-3 border text-center">{value}</td>;
+                })}
+                <td className="p-3 border text-center font-black">{runs}</td>
+                <td className="p-3 border text-center font-black">{teamSummary.hits || 0}</td>
+                <td className="p-3 border text-center font-black">{teamSummary.errors || 0}</td>
+                <td className="p-3 border text-center font-black">{teamSummary.walks || 0}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  };
+
+  const renderGameResultDetail = () => {
+    if (!selectedGameResult?.detail) return null;
+    const detail = selectedGameResult.detail;
+
+    return (
+      <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4" onClick={() => { setSelectedGameResult(null); setDetailTab('summary'); }}>
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white z-10">
+            <div>
+              <p className="text-sm text-gray-500">{selectedGameResult.date}</p>
+              <h3 className="text-2xl font-black text-gray-800">{selectedGameResult.away} {selectedGameResult.awayScore} : {selectedGameResult.homeScore} {selectedGameResult.home}</h3>
+            </div>
+            
+            <div className="flex bg-gray-100 p-1 rounded-xl w-full sm:w-auto">
+              {['summary', 'lineup', 'playbyplay'].map(tab => {
+                const labels = { summary: '경기 요약', lineup: '라인업/기록', playbyplay: 'Play by Play' };
+                return (
+                  <button 
+                    key={tab} 
+                    onClick={() => setDetailTab(tab)}
+                    className={`flex-1 sm:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-all ${detailTab === tab ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    {labels[tab]}
+                  </button>
+                )
+              })}
+            </div>
+
+            <button onClick={() => { setSelectedGameResult(null); setDetailTab('summary'); }} className="hidden sm:block text-gray-500 hover:text-gray-800"><X size={28} /></button>
+          </div>
+
+          <div className="p-6 overflow-y-auto flex-1 bg-gray-50/50">
+            {detailTab === 'summary' && (
+              <div className="space-y-6">
+                <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+                  <h4 className="text-lg font-black text-gray-800 mb-4">이닝별 득점</h4>
+                  <div className="overflow-x-auto">{renderInningBox(detail)}</div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                    <h4 className="text-lg font-black text-gray-800 mb-4">팀 스탯 비교</h4>
+                    <div className="space-y-3">
+                      {detail.statBars.map(bar => (
+                        <div key={bar.label} className="grid grid-cols-[30px_1fr_30px] items-center gap-3 text-sm">
+                          <div className="text-right font-black text-gray-600">{bar.left}</div>
+                          <div className="relative h-6 bg-gray-100 rounded-full overflow-hidden flex items-center justify-center font-bold text-white text-xs">
+                            <div className="absolute inset-y-0 left-0 bg-gray-400" style={{ width: `${Math.max(5, (bar.left / Math.max(bar.left + bar.right, 1)) * 100)}%` }} />
+                            <div className="absolute inset-y-0 right-0 bg-blue-500" style={{ width: `${Math.max(5, (bar.right / Math.max(bar.left + bar.right, 1)) * 100)}%` }} />
+                            <span className="relative z-10 text-gray-800">{bar.label}</span>
+                          </div>
+                          <div className="font-black text-blue-600">{bar.right}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                    <h4 className="text-lg font-black text-gray-800 mb-4">우리 팀 투수 기록</h4>
+                    <div className="space-y-3">
+                      {(detail.pitchers?.length ? detail.pitchers : [detail.pitcher]).map((pitcherRow, idx) => (
+                        <div key={`${pitcherRow.name}-${idx}`} className="bg-gray-50 rounded-xl p-3 text-sm flex flex-wrap gap-x-4 gap-y-2">
+                          <div className="font-bold text-gray-800 w-full mb-1">{pitcherRow.name}</div>
+                          <div><span className="text-gray-500 text-xs">이닝</span> <span className="font-bold">{outsToBaseballInnings(pitcherRow.inningsOuts || 0)}</span></div>
+                          <div><span className="text-gray-500 text-xs">실점</span> <span className="font-bold">{pitcherRow.runsAllowed}</span></div>
+                          <div><span className="text-gray-500 text-xs">자책</span> <span className="font-bold">{pitcherRow.earnedRuns}</span></div>
+                          <div><span className="text-gray-500 text-xs">피안타</span> <span className="font-bold">{pitcherRow.hitsAllowed}</span></div>
+                          <div><span className="text-gray-500 text-xs">볼넷</span> <span className="font-bold">{pitcherRow.walksAllowed}</span></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {detailTab === 'lineup' && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
+                <table className="w-full text-sm min-w-[980px]">
+                  <thead className="bg-gray-50 text-gray-600 border-b border-gray-100">
+                    <tr>
+                      <th className="p-3 text-left">순번</th>
+                      <th className="p-3 text-left">선수</th>
+                      {[1,2,3,4,5,6,7,8,9].map(i => <th key={i} className="p-3 text-center">{i}</th>)}
+                      <th className="p-3 text-center">타수</th>
+                      <th className="p-3 text-center">안타</th>
+                      <th className="p-3 text-center">타점</th>
+                      <th className="p-3 text-center">득점</th>
+                      <th className="p-3 text-center">타율</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {detail.lineup.map(row => (
+                      <tr key={`${row.order}-${row.name}`} className="hover:bg-gray-50">
+                        <td className="p-3 text-center font-bold text-gray-400">{row.order}</td>
+                        <td className="p-3 font-bold text-gray-800">{row.name} <span className="text-gray-400 text-xs font-medium ml-1">{row.position}</span></td>
+                        {[1,2,3,4,5,6,7,8,9].map(i => (
+                          <td key={i} className="p-3 text-center text-xs text-gray-500">{(row.resultByInning?.[`${i}`] || []).join(', ')}</td>
+                        ))}
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.atBats}</td>
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.hits}</td>
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.rbi}</td>
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.runs}</td>
+                        <td className="p-3 text-center font-black text-blue-600 bg-blue-50/30">{calculateBattingAverage(row.hits, row.atBats)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {detailTab === 'playbyplay' && (
+              <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                <div className="space-y-3">
+                  {detail.playEvents.map((event, index) => (
+                    <div key={index} className="flex gap-4 items-center">
+                      <div className="text-gray-300 font-black text-xs w-6 text-right">{detail.playEvents.length - index}</div>
+                      <div className="bg-gray-50 rounded-lg px-4 py-3 text-sm text-gray-700 flex-1 border border-gray-100">{event}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPlayerDetail = () => {
+    if (!selectedPlayer) return null;
+    const isPitcher = selectedPlayer.type === '투수';
+    const career = selectedPlayer.career || {};
+
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[70]" onClick={() => setSelectedPlayer(null)}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col relative" onClick={e => e.stopPropagation()}>
+          <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-8 flex items-center gap-6 relative">
+            <button onClick={() => setSelectedPlayer(null)} className="absolute top-4 right-4 text-white/70 hover:text-white">
+              <X size={28} />
+            </button>
+            <div className="w-28 h-28 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/30 backdrop-blur overflow-hidden">
+              {playerPhotos[getPlayerKey(selectedPlayer)] ? (
+                <img src={playerPhotos[getPlayerKey(selectedPlayer)]} alt={`${selectedPlayer.name} 프로필`} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-5xl font-black">{selectedPlayer.uniformNumber}</span>
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-blue-300 font-bold text-sm tracking-widest mb-1">POLARIS · {selectedPlayer.position}</p>
+              <h2 className="text-4xl font-black mb-2">{selectedPlayer.name}</h2>
+              <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${isPitcher ? 'bg-green-500' : 'bg-blue-500'}`}>
+                {selectedPlayer.type}
+              </span>
+              {isAdminAuth && (
+                <div className="mt-4">
+                  <label className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors">
+                    <Camera size={16} /> 프로필 사진 업로드
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePlayerPhotoUpload(selectedPlayer, e.target.files?.[0])} />
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-y-auto p-8 space-y-8">
+            <div>
+              <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2"><span className="w-1 h-5 bg-blue-600 rounded"></span> {seasonLabel} 기록</h3>
+              <div className="overflow-x-auto bg-blue-50/50 rounded-xl border border-blue-100">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-600 border-b border-blue-100">
+                    <tr>
+                      {isPitcher ? (
+                        <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold text-blue-700">ERA</th></>
+                      ) : (
+                        <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">AB</th><th className="p-3 font-semibold">R</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">HR</th><th className="p-3 font-semibold">RBI</th><th className="p-3 font-semibold text-blue-700">AVG</th></>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="text-gray-800 font-bold text-center">
+                    <tr>
+                      {isPitcher ? (
+                        <><td className="p-3">{selectedPlayer.games}</td><td className="p-3">{selectedPlayer.wins}</td><td className="p-3">{selectedPlayer.losses}</td><td className="p-3">{selectedPlayer.saves}</td><td className="p-3">{selectedPlayer.innings}</td><td className="p-3">{selectedPlayer.strikeouts}</td><td className="p-3 text-blue-700 text-lg">{selectedPlayer.era}</td></>
+                      ) : (
+                        <><td className="p-3">{selectedPlayer.games}</td><td className="p-3">{selectedPlayer.atBats}</td><td className="p-3">{selectedPlayer.runs}</td><td className="p-3">{selectedPlayer.hits}</td><td className="p-3">{selectedPlayer.homeRuns}</td><td className="p-3">{selectedPlayer.rbi}</td><td className="p-3 text-blue-700 text-lg">{selectedPlayer.avg}</td></>
+                      )}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2"><span className="w-1 h-5 bg-amber-500 rounded"></span> 통산 기록 (Career)</h3>
+              <div className="overflow-x-auto bg-amber-50/50 rounded-xl border border-amber-100">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-600 border-b border-amber-100">
+                    <tr>
+                      {isPitcher ? (
+                        <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold text-amber-700">ERA</th></>
+                      ) : (
+                        <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">AB</th><th className="p-3 font-semibold">R</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">HR</th><th className="p-3 font-semibold">RBI</th><th className="p-3 font-semibold text-amber-700">AVG</th></>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="text-gray-800 font-bold text-center">
+                    <tr>
+                      {isPitcher ? (
+                        <><td className="p-3">{career.games || 0}</td><td className="p-3">{career.wins || 0}</td><td className="p-3">{career.losses || 0}</td><td className="p-3">{career.saves || 0}</td><td className="p-3">{career.innings || 0}</td><td className="p-3">{career.strikeouts || 0}</td><td className="p-3 text-amber-700 text-lg">{career.era || '0.00'}</td></>
+                      ) : (
+                        <><td className="p-3">{career.games || 0}</td><td className="p-3">{career.atBats || 0}</td><td className="p-3">{career.runs || 0}</td><td className="p-3">{career.hits || 0}</td><td className="p-3">{career.homeRuns || 0}</td><td className="p-3">{career.rbi || 0}</td><td className="p-3 text-amber-700 text-lg">{career.avg || '0.000'}</td></>
+                      )}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderLanding = () => (
     <div className="relative w-full h-screen flex flex-col justify-center items-center bg-black overflow-hidden">
       <style>
@@ -1047,15 +1588,21 @@ export default function App() {
         `}
       </style>
 
-      <div className="absolute inset-0 z-0 bg-black overflow-hidden">
+      <div className="absolute inset-0 z-0 bg-black overflow-hidden flex items-center justify-center">
         <img 
           src={customBackground} 
           alt="팀 배경 사진" 
-          className="w-full h-full object-cover object-bottom opacity-60 animate-bg origin-bottom"
+          className="w-full h-full object-cover opacity-60 animate-bg"
+          style={{ 
+            objectPosition: `${bgSettings.posX}% ${bgSettings.posY}%`, 
+            transform: `scale(${bgSettings.scale})`,
+            transformOrigin: `${bgSettings.posX}% ${bgSettings.posY}%` 
+          }}
+          draggable="false"
         />
       </div>
       
-      <div className="relative z-10 flex-grow flex flex-col justify-center items-center text-center w-full px-4 pt-10">
+      <div className="relative z-10 flex-grow flex flex-col justify-center items-center text-center w-full px-4 pt-10 pointer-events-none">
         <h1 
           className="text-white leading-tight overflow-hidden" 
           style={{ 
@@ -1069,7 +1616,7 @@ export default function App() {
         </h1>
       </div>
 
-      <div className="absolute bottom-6 right-8 z-20">
+      <div className="absolute bottom-6 right-8 z-20 pointer-events-none">
         <p className="text-white/70 italic text-xs md:text-sm tracking-widest" style={{ fontFamily: "Georgia, serif" }}>
           since. 1982 SCH College of Medicine
         </p>
@@ -1230,7 +1777,7 @@ export default function App() {
           <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
             <Camera size={80} className="text-gray-300 mb-6" />
             <h3 className="text-3xl font-black text-gray-800 mb-4">첫 단체 사진을 올려보세요</h3>
-            <p className="text-gray-500 text-lg font-medium">관리자 권한 로그인 후 사진을 업로드할 수 있습니다.</p>
+            <p className="text-gray-500 text-lg font-medium">관리자 모드 로그인 후 사진을 업로드할 수 있습니다.</p>
           </div>
         )}
       </div>
@@ -1332,22 +1879,78 @@ export default function App() {
         )}
 
         {adminSubTab === 'settings' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 max-w-2xl">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 max-w-4xl">
             <h3 className="text-2xl font-black text-gray-800 mb-6">환경 설정</h3>
             <div className="mb-6">
-              <label className="block text-sm font-bold text-gray-700 mb-2">홈페이지 배경 사진 변경</label>
-              <div className="flex items-center gap-4">
-                <label className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold cursor-pointer transition-colors shadow-sm flex items-center gap-2">
-                  <ImageIcon size={18} />
-                  사진 업로드
-                  <input type="file" accept="image/*" className="hidden" onChange={handleBackgroundUpload} />
-                </label>
-                {customBackground !== '/background.JPG' && (
-                  <button onClick={resetBackground} className="text-sm text-red-500 hover:text-red-700 underline font-bold">기본 이미지로 초기화</button>
-                )}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-4">
+                <label className="block text-sm font-bold text-gray-700">홈페이지 배경 사진 설정 (마우스나 터치로 위치 조정 가능)</label>
+                <div className="flex items-center gap-3">
+                  <label className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-bold cursor-pointer transition-colors shadow-sm flex items-center gap-2 text-sm">
+                    <ImageIcon size={16} /> 사진 업로드
+                    <input type="file" accept="image/*" className="hidden" onChange={handleBackgroundUpload} />
+                  </label>
+                  <button onClick={saveBackgroundSettings} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm flex items-center gap-2 text-sm">
+                    <Save size={16} /> 설정 저장
+                  </button>
+                  <button onClick={resetBackground} className="text-sm text-red-500 hover:text-red-700 underline font-bold px-2">초기화</button>
+                </div>
               </div>
-              <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 h-64 relative bg-gray-50">
-                <img src={customBackground} alt="배경 미리보기" className="w-full h-full object-cover object-bottom" />
+
+              <div className="flex flex-col lg:flex-row gap-6">
+                {/* 컨트롤 패널 */}
+                <div className="flex flex-col gap-4 bg-gray-50 p-5 rounded-xl border border-gray-200 lg:w-48">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-2">크기 조절 (확대/축소)</label>
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleZoomOut} className="bg-white p-2 rounded border border-gray-300 hover:bg-gray-100"><ZoomOut size={16}/></button>
+                      <span className="flex-1 text-center font-bold text-sm">{(bgSettings.scale * 100).toFixed(0)}%</span>
+                      <button onClick={handleZoomIn} className="bg-white p-2 rounded border border-gray-300 hover:bg-gray-100"><ZoomIn size={16}/></button>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-2 text-center">모바일에서는 핀치 줌 지원</p>
+                  </div>
+                </div>
+
+                {/* 크롭 프레임 UI */}
+                <div className="flex-1">
+                  <div 
+                    ref={bgContainerRef}
+                    className="relative w-full aspect-video bg-gray-200 rounded-xl overflow-hidden cursor-move touch-none border-2 border-dashed border-gray-400 shadow-inner"
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                  >
+                    <div className="w-full h-full flex items-center justify-center pointer-events-none">
+                      <img 
+                        src={customBackground} 
+                        alt="배경 미리보기" 
+                        className="w-full h-full object-cover" 
+                        style={{ 
+                          objectPosition: `${bgSettings.posX}% ${bgSettings.posY}%`, 
+                          transform: `scale(${bgSettings.scale})`,
+                          transformOrigin: `${bgSettings.posX}% ${bgSettings.posY}%` 
+                        }}
+                        draggable="false"
+                      />
+                    </div>
+                    
+                    {/* 3x3 격자 가이드라인 */}
+                    <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3 opacity-40">
+                      <div className="border-b border-r border-white"></div>
+                      <div className="border-b border-r border-white"></div>
+                      <div className="border-b border-white"></div>
+                      <div className="border-b border-r border-white"></div>
+                      <div className="border-b border-r border-white"></div>
+                      <div className="border-b border-white"></div>
+                      <div className="border-r border-white"></div>
+                      <div className="border-r border-white"></div>
+                      <div></div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
