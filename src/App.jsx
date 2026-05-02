@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock } from 'lucide-react';
+import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon } from 'lucide-react';
 
 const POSITIONS = ['투수', '포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수', '지명타자'];
 
@@ -25,6 +25,7 @@ export default function App() {
   const [galleryPosts, setGalleryPosts] = useState([]);
   const [playerPhotos, setPlayerPhotos] = useState({});
   const [selectedGameResult, setSelectedGameResult] = useState(null);
+  const [customBackground, setCustomBackground] = useState('/background.JPG');
 
   const [batters, setBatters] = useState([
     { id: 1, name: '김타자', uniformNumber: 15, position: '중견수', games: 120, atBats: 400, runs: 80, hits: 120, homeRuns: 20, rbi: 75, walks: 0, steals: 0, errors: 0, avg: '0.300', career: { games: 580, atBats: 1900, runs: 350, hits: 540, homeRuns: 85, rbi: 320, avg: '0.284' } },
@@ -42,7 +43,6 @@ export default function App() {
     ...pitchers.map(p => ({ ...p, type: '투수' }))
   ].sort((a, b) => a.uniformNumber - b.uniformNumber)), [batters, pitchers]);
 
-  // 빈 배열로 초기화 
   const [gameResults, setGameResults] = useState([]);
 
   const [formData, setFormData] = useState({
@@ -125,6 +125,37 @@ export default function App() {
     if (window.confirm('정말로 이 투수 기록을 삭제하시겠습니까?')) {
       setPitchers(pitchers.filter(pitcher => pitcher.id !== id));
     }
+  };
+
+  const handleBackgroundUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const imageUrl = await fileToDataUrl(file);
+      setCustomBackground(imageUrl);
+      await putMediaItem({
+        key: 'background:current',
+        type: 'background',
+        imageUrl,
+        updatedAt: Date.now()
+      });
+      alert('배경 화면이 성공적으로 변경되었습니다.');
+    } catch (error) {
+      console.error('배경 화면 저장 실패', error);
+      alert('배경 화면 저장 중 오류가 발생했습니다.');
+    }
+    e.target.value = '';
+  };
+
+  const resetBackground = async () => {
+    setCustomBackground('/background.JPG');
+    await putMediaItem({
+      key: 'background:current',
+      type: 'background',
+      imageUrl: '/background.JPG',
+      updatedAt: Date.now()
+    });
   };
 
   // ----------------------------------------------------
@@ -842,6 +873,13 @@ export default function App() {
             acc[item.playerKey] = item.imageUrl;
             return acc;
           }, {});
+
+        // 배경 사진 로드
+        const loadedBackground = items.find(item => item.key === 'background:current');
+        if (loadedBackground && loadedBackground.imageUrl !== '/background.JPG') {
+          setCustomBackground(loadedBackground.imageUrl);
+        }
+
         setGalleryPosts(loadedGalleryPosts);
         setPlayerPhotos(loadedPlayerPhotos);
       } catch (error) {
@@ -989,29 +1027,45 @@ export default function App() {
             0% { transform: scale(1); }
             100% { transform: scale(1.05); }
           }
-          .animate-bg { animation: slowZoom 15s ease-in-out infinite alternate; }
+          @keyframes slideInLeft {
+            0% { transform: translateX(-100%); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+          }
+          @keyframes slideInRight {
+            0% { transform: translateX(100%); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+          }
+          .animate-bg { 
+            animation: slowZoom 15s ease-in-out infinite alternate; 
+          }
+          .animate-slide-left {
+            animation: slideInLeft 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+          .animate-slide-right {
+            animation: slideInRight 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
         `}
       </style>
 
       <div className="absolute inset-0 z-0 bg-black overflow-hidden">
         <img 
-          src="/background.JPG" 
-          alt="팀 단체 배경 사진" 
+          src={customBackground} 
+          alt="팀 배경 사진" 
           className="w-full h-full object-cover object-bottom opacity-60 animate-bg origin-bottom"
         />
       </div>
       
       <div className="relative z-10 flex-grow flex flex-col justify-center items-center text-center w-full px-4 pt-10">
         <h1 
-          className="text-white leading-tight" 
+          className="text-white leading-tight overflow-hidden" 
           style={{ 
             fontFamily: "'Noto Sans KR', sans-serif",
             fontWeight: 900,
             textShadow: "6px 6px 0 #000, 10px 10px 25px rgba(0,0,0,0.9)"
           }}
         >
-          <span className="block text-5xl md:text-7xl lg:text-[6rem] tracking-widest mb-2 md:mb-4 text-gray-100">순천향의대</span>
-          <span className="block text-5xl md:text-7xl lg:text-[6rem] tracking-widest text-gray-100">폴라리스</span>
+          <span className="block text-5xl md:text-7xl lg:text-[6rem] tracking-widest mb-2 md:mb-4 text-gray-100 animate-slide-left">순천향의대</span>
+          <span className="block text-5xl md:text-7xl lg:text-[6rem] tracking-widest text-gray-100 animate-slide-right">폴라리스</span>
         </h1>
       </div>
 
@@ -1088,7 +1142,7 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-gray-100 text-gray-800">
                 {gameResults.length === 0 ? (
-                  <tr><td colSpan={6} className="p-8 text-center text-gray-500">기록된 경기가 없습니다.</td></tr>
+                  <tr><td colSpan={6} className="p-8 text-center text-gray-500 font-medium">기록된 경기가 없습니다.</td></tr>
                 ) : gameResults.map(g => (
                   <tr key={g.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => g.detail && setSelectedGameResult(g)}>
                     <td className="p-4 font-medium text-gray-500">{g.date}</td>
@@ -1102,7 +1156,7 @@ export default function App() {
                       {g.home === '폴라리스' ? `${g.homeScore} : ${g.awayScore}` : `${g.awayScore} : ${g.homeScore}`}
                     </td>
                     <td className="p-4 text-center">
-                      <span className={`font-black px-3 py-1 rounded-full text-sm ${g.result === '승' ? 'bg-blue-600 text-white' : g.result === '패' ? 'bg-red-500 text-white' : 'bg-gray-400 text-white'}`}>
+                      <span className={`font-black px-3 py-1 rounded-full text-sm ${g.result === '승' ? 'bg-blue-600 text-white' : g.result === '패' ? 'bg-red-500 text-white' : g.result === '-' ? 'bg-gray-700 text-white' : 'bg-gray-400 text-white'}`}>
                         {g.result}
                       </span>
                     </td>
@@ -1176,7 +1230,7 @@ export default function App() {
           <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
             <Camera size={80} className="text-gray-300 mb-6" />
             <h3 className="text-3xl font-black text-gray-800 mb-4">첫 단체 사진을 올려보세요</h3>
-            <p className="text-gray-500 text-lg font-medium">관리자 모드 로그인 후 사진을 업로드할 수 있습니다.</p>
+            <p className="text-gray-500 text-lg font-medium">관리자 권한 로그인 후 사진을 업로드할 수 있습니다.</p>
           </div>
         )}
       </div>
@@ -1255,6 +1309,9 @@ export default function App() {
           <button onClick={() => setAdminSubTab('gameRecord')} className={`px-5 py-2 rounded-full font-bold transition-colors whitespace-nowrap ${adminSubTab === 'gameRecord' ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
             <div className="flex items-center space-x-1"><PlayCircle size={18} /><span>실시간 경기 기록</span></div>
           </button>
+          <button onClick={() => setAdminSubTab('settings')} className={`px-5 py-2 rounded-full font-bold transition-colors whitespace-nowrap ${adminSubTab === 'settings' ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            <div className="flex items-center space-x-1"><Settings size={18} /><span>환경 설정</span></div>
+          </button>
         </div>
 
         {adminSubTab === 'dashboard' && (
@@ -1270,6 +1327,28 @@ export default function App() {
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
               <div className="p-3 bg-amber-100 text-amber-600 rounded-lg"><Trophy size={24} /></div>
               <div><p className="text-sm text-gray-500 font-medium">팀 홈런</p><h3 className="text-2xl font-bold text-gray-800">{batters.reduce((sum, batter) => sum + batter.homeRuns, 0)}개</h3></div>
+            </div>
+          </div>
+        )}
+
+        {adminSubTab === 'settings' && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 max-w-2xl">
+            <h3 className="text-2xl font-black text-gray-800 mb-6">환경 설정</h3>
+            <div className="mb-6">
+              <label className="block text-sm font-bold text-gray-700 mb-2">홈페이지 배경 사진 변경</label>
+              <div className="flex items-center gap-4">
+                <label className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold cursor-pointer transition-colors shadow-sm flex items-center gap-2">
+                  <ImageIcon size={18} />
+                  사진 업로드
+                  <input type="file" accept="image/*" className="hidden" onChange={handleBackgroundUpload} />
+                </label>
+                {customBackground !== '/background.JPG' && (
+                  <button onClick={resetBackground} className="text-sm text-red-500 hover:text-red-700 underline font-bold">기본 이미지로 초기화</button>
+                )}
+              </div>
+              <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 h-64 relative bg-gray-50">
+                <img src={customBackground} alt="배경 미리보기" className="w-full h-full object-cover object-bottom" />
+              </div>
             </div>
           </div>
         )}
@@ -1624,76 +1703,8 @@ export default function App() {
             </div>
           )}
           {activeTab === 'records' && renderRecordsAndRankings()}
-          {activeTab === 'photos' && (
-            <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
-                <div>
-                  <h2 className="text-3xl font-black text-gray-800">팀 갤러리</h2>
-                  <p className="text-gray-500 mt-2">단체 사진을 업로드하면 피드 형식으로 표시됩니다.</p>
-                </div>
-                {isAdminAuth && (
-                  <label className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl font-bold cursor-pointer transition-colors shadow-md text-center">
-                    단체 사진 업로드
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleGalleryUpload} />
-                  </label>
-                )}
-              </div>
-              <div className="space-y-6">
-                {galleryPosts.map(post => (
-                  <article key={post.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                    <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
-                      <div className="w-11 h-11 rounded-full bg-slate-800 text-white flex items-center justify-center font-black">P</div>
-                      <div>
-                        <p className="font-bold text-gray-800">폴라리스</p>
-                        <p className="text-xs text-gray-500">{post.createdAt}</p>
-                      </div>
-                    </div>
-                    <img src={post.imageUrl} alt={post.fileName} className="w-full max-h-[680px] object-cover bg-gray-100" />
-                    <div className="px-5 py-4">
-                      <p className="font-semibold text-gray-800 mb-1">{post.caption}</p>
-                      <p className="text-sm text-gray-500">{post.fileName}</p>
-                    </div>
-                  </article>
-                ))}
-                {galleryPosts.length === 0 && (
-                  <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-                    <Camera size={80} className="text-gray-300 mb-6" />
-                    <h3 className="text-3xl font-black text-gray-800 mb-4">첫 단체 사진을 올려보세요</h3>
-                    <p className="text-gray-500 text-lg font-medium">관리자 모드 로그인 후 사진을 업로드할 수 있습니다.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {activeTab === 'lockerRoom' && (
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex items-center justify-between mb-8">
-                <h2 className="text-3xl font-black text-gray-800">팀 락커룸</h2>
-                <p className="text-gray-500 font-bold">총 {allPlayers.length}명의 선수</p>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                {allPlayers.map((player) => (
-                  <button key={`${player.type}-${player.id}`} onClick={() => setSelectedPlayer(player)} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col items-center hover:shadow-lg hover:-translate-y-1 transition-all text-left">
-                    <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mb-4 relative border-4 border-slate-800 overflow-hidden">
-                      {playerPhotos[getPlayerKey(player)] ? (
-                        <img src={playerPhotos[getPlayerKey(player)]} alt={`${player.name} 프로필`} className="w-full h-full object-cover" />
-                      ) : (
-                        <>
-                          <Shirt size={48} className="text-slate-800 absolute opacity-10" />
-                          <span className="text-3xl font-black text-slate-800 z-10">{player.uniformNumber}</span>
-                        </>
-                      )}
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-800 mb-1">{player.name}</h3>
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${player.type === '타자' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>{player.position}</span>
-                  </button>
-                ))}
-                {allPlayers.length === 0 && (
-                  <div className="col-span-full py-12 text-center text-gray-500 bg-white rounded-xl border border-gray-100">락커룸이 비어 있습니다. 선수를 등록해주세요.</div>
-                )}
-              </div>
-            </div>
-          )}
+          {activeTab === 'photos' && renderPhotos()}
+          {activeTab === 'lockerRoom' && renderLockerRoom()}
           {activeTab === 'admin' && renderAdmin()}
         </main>
       )}
