@@ -6,7 +6,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
-// --- 제공해주신 Firebase Config ---
+// --- Firebase Config ---
 const firebaseConfig = {
   apiKey: "AIzaSyACJx4P4OkcGp8y1Ym4LZHvC6LTgAM_aEs",
   authDomain: "polaris-8a991.firebaseapp.com",
@@ -52,8 +52,8 @@ function calculateEra(earnedRuns, inningsOrOuts) {
   return ((earnedRuns * 9) / ip).toFixed(2);
 }
 
-// 이미지 리사이징 함수
-const resizeImage = (file, maxWidth, maxHeight) => {
+// FHD 해상도로 제한하는 고화질 이미지 리사이징 함수
+const resizeImage = (file, maxWidth = 1920, maxHeight = 1920) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -62,22 +62,20 @@ const resizeImage = (file, maxWidth, maxHeight) => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        if (width > height) {
-          if (width > maxWidth) {
-            height = Math.round((height *= maxWidth / width));
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxHeight) {
-            width = Math.round((width *= maxHeight / height));
-            height = maxHeight;
-          }
+        
+        // 원본 크기가 최대 해상도보다 큰 경우에만 비율에 맞춰 리사이징
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
         }
+        
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        // 고화질 유지를 위해 품질 0.85 적용
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
       };
       img.src = e.target.result;
     };
@@ -213,11 +211,11 @@ function InningBox({ detail }) {
           const teamSummary = detail.summary[teamKey] || { hits: 0, errors: 0, walks: 0 };
           return (
             <tr key={`inning-row-${teamKey}`}>
-              <td className="p-3 border font-bold text-center">{row.label}</td>
+              <td className="p-3 border font-bold text-center">{String(row.label)}</td>
               {innings.map(inning => {
                 const halfKey = teamKey === 'teamA' ? `${inning}-top` : `${inning}-bottom`;
                 const value = detail.inningScores?.[halfKey]?.[teamKey] ?? '';
-                return <td key={halfKey} className="p-3 border text-center">{value}</td>;
+                return <td key={halfKey} className="p-3 border text-center">{String(value)}</td>;
               })}
               <td className="p-3 border text-center font-black">{runs}</td>
               <td className="p-3 border text-center font-black">{teamSummary.hits || 0}</td>
@@ -297,7 +295,7 @@ export default function App() {
   const [showEndGameModal, setShowEndGameModal] = useState(false);
   const [endGameMvp, setEndGameMvp] = useState('');
 
-  // Firebase Auth Init
+  // Firebase Auth 초기화
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -311,13 +309,17 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Firestore Data Sync
+  // Firebase Firestore 실시간 구독
   useEffect(() => {
     if (!user) return;
     
     const unsubPlayers = onSnapshot(collection(db, 'polaris_players'), (snap) => {
-      const loaded = snap.docs.map(d => d.data());
-      setPlayers(loaded.sort((a,b) => a.uniformNumber - b.uniformNumber));
+      if (snap.empty) {
+        defaultPlayersData.forEach(p => setDoc(doc(db, 'polaris_players', p.id.toString()), p));
+      } else {
+        const loaded = snap.docs.map(d => d.data());
+        setPlayers(loaded.sort((a,b) => a.uniformNumber - b.uniformNumber));
+      }
     });
 
     const unsubGames = onSnapshot(collection(db, 'polaris_games'), (snap) => {
@@ -367,6 +369,10 @@ export default function App() {
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleScheduleInputChange = (e) => {
+    setScheduleForm({ ...scheduleForm, [e.target.name]: e.target.value });
   };
 
   const handleAdminLogin = () => {
@@ -621,63 +627,11 @@ export default function App() {
     
     const schedule = schedules.find(s => s.id === showRsvpModal);
     if (schedule) {
-      const updatedSchedule = { ...schedule, rsvps: { ...schedule.rsvps, [rsvpPlayerId]: rsvpStatus } };
+      const updatedSchedule = { ...schedule, rsvps: { ...(schedule.rsvps || {}), [rsvpPlayerId]: rsvpStatus } };
       await setDoc(doc(db, 'polaris_schedules', schedule.id.toString()), updatedSchedule);
     }
     setShowRsvpModal(null);
     setRsvpPlayerId('');
-  };
-
-  const downloadLineupCard = () => {
-    if (!gameState) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = 800; canvas.height = 1000;
-    const ctx = canvas.getContext('2d');
-    
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, 800, 1000);
-    
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 40px "Malgun Gothic"';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${gameState.teamA.name} vs ${gameState.teamB.name}`, 400, 80);
-    
-    ctx.font = '20px "Malgun Gothic"';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('STARTING LINEUP', 400, 120);
-    
-    const drawTeam = (team, xOffset) => {
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold 28px "Malgun Gothic"';
-      ctx.textAlign = 'center';
-      ctx.fillText(team.name, xOffset, 200);
-      
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 22px "Malgun Gothic"';
-      team.lineup.forEach((player, i) => {
-        if(player.playerId) {
-          ctx.fillText(`${i+1}. ${player.assignedPosition} ${player.name}`, xOffset, 260 + (i * 50));
-        }
-      });
-      
-      ctx.fillStyle = '#ffb703';
-      ctx.fillText(`P. ${team.pitcher?.name || '미정'}`, xOffset, 260 + (9 * 50) + 40);
-    };
-    
-    drawTeam(gameState.teamA, 220);
-    drawTeam(gameState.teamB, 580);
-    
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(400, 160);
-    ctx.lineTo(400, 900);
-    ctx.stroke();
-
-    const link = document.createElement('a');
-    link.download = `lineup_${new Date().toISOString().slice(0,10)}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
   };
 
   const handleBackgroundUpload = async (e) => {
@@ -685,7 +639,7 @@ export default function App() {
     if (!file || !user) return;
 
     try {
-      const imageUrl = await resizeImage(file, 1600, 1200);
+      const imageUrl = await resizeImage(file, 1920, 1920); // 배경 FHD급 고화질 압축
       setCustomBackground(imageUrl);
       setBgSettings({ scale: 1, posX: 50, posY: 50 });
       await setDoc(doc(db, 'polaris_settings', 'background_current'), {
@@ -1660,7 +1614,7 @@ export default function App() {
     try {
       for (let i=0; i<files.length; i++) {
         const file = files[i];
-        const imageUrl = await resizeImage(file, 1024, 1024);
+        const imageUrl = await resizeImage(file, 1920, 1920);
         const newId = generateId();
         await setDoc(doc(db, 'polaris_gallery', newId), {
           id: newId,
@@ -1684,7 +1638,7 @@ export default function App() {
     if (!file || !player || !user) return;
     try {
       const key = getPlayerKey(player);
-      const imageUrl = await resizeImage(file, 300, 300);
+      const imageUrl = await resizeImage(file, 1920, 1920);
       
       await setDoc(doc(db, 'polaris_playerPhotos', key), {
         playerKey: key,
@@ -1828,8 +1782,8 @@ export default function App() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {schedules.map((schedule, idx) => {
-            const attendCount = Object.values(schedule.rsvps).filter(v => v === '참석').length;
-            const absentCount = Object.values(schedule.rsvps).filter(v => v === '불참').length;
+            const attendCount = Object.values(schedule.rsvps || {}).filter(v => v === '참석').length;
+            const absentCount = Object.values(schedule.rsvps || {}).filter(v => v === '불참').length;
             const isPast = new Date(schedule.date) < new Date(new Date().toDateString());
 
             return (
