@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon, ZoomIn, ZoomOut, Save, ChevronDown, ChevronUp } from 'lucide-react';
+import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon, ZoomIn, ZoomOut, Save, ChevronDown, ChevronUp, MoreVertical, Edit } from 'lucide-react';
 
 const POSITIONS = ['투수', '포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수', '외야수', '내야수', '지명타자'];
 
-// --- 공통 유틸리티 함수 (오류 방지를 위해 컴포넌트 외부로 분리) ---
+// --- 공통 유틸리티 함수 ---
 const generateId = () => {
   return typeof crypto !== 'undefined' && crypto.randomUUID 
     ? crypto.randomUUID() 
@@ -28,8 +28,26 @@ const calculateEra = (earnedRuns, inningsOrOuts) => {
   return ((earnedRuns * 9) / ip).toFixed(2);
 };
 
+// --- 기본 기록 템플릿 ---
+const createBaseBatting = () => ({
+  games: 0, atBats: 0, runs: 0, hits: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000',
+  career: { games: 0, atBats: 0, runs: 0, hits: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000' }
+});
 
-// --- 헬퍼 컴포넌트 분리 ---
+const createBasePitching = () => ({
+  games: 0, wins: 0, losses: 0, saves: 0, innings: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, era: '0.00',
+  career: { games: 0, wins: 0, losses: 0, saves: 0, innings: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, era: '0.00' }
+});
+
+// --- 초기 기본 선수 데이터 ---
+const defaultPlayersData = [
+  { id: '1', name: '김타자', uniformNumber: 15, position: '중견수', primaryRole: '타자', batting: { games: 120, atBats: 400, runs: 80, hits: 120, homeRuns: 20, rbi: 75, walks: 30, strikeouts: 50, steals: 10, errors: 2, avg: '0.300', career: { games: 580, atBats: 1900, runs: 350, hits: 540, homeRuns: 85, rbi: 320, walks: 150, strikeouts: 300, steals: 45, errors: 12, avg: '0.284' } }, pitching: createBasePitching() },
+  { id: '2', name: '이거포', uniformNumber: 52, position: '1루수', primaryRole: '타자', batting: { games: 115, atBats: 380, runs: 65, hits: 95, homeRuns: 30, rbi: 90, walks: 45, strikeouts: 110, steals: 1, errors: 5, avg: '0.250', career: { games: 450, atBats: 1500, runs: 240, hits: 380, homeRuns: 105, rbi: 320, walks: 180, strikeouts: 420, steals: 3, errors: 20, avg: '0.253' } }, pitching: createBasePitching() },
+  { id: '3', name: '박오타', uniformNumber: 17, position: '우익수', primaryRole: '투타겸업', batting: { games: 130, atBats: 450, runs: 90, hits: 150, homeRuns: 40, rbi: 100, walks: 55, strikeouts: 40, steals: 30, errors: 1, avg: '0.333', career: { games: 300, atBats: 1000, runs: 200, hits: 320, homeRuns: 80, rbi: 220, walks: 120, strikeouts: 100, steals: 50, errors: 5, avg: '0.320' } }, pitching: { games: 15, wins: 10, losses: 2, saves: 0, innings: 100, strikeouts: 120, runsAllowed: 30, earnedRuns: 25, hitsAllowed: 80, walksAllowed: 20, battersFaced: 400, era: '2.25', career: { games: 50, wins: 30, losses: 10, saves: 0, innings: 300, strikeouts: 350, runsAllowed: 100, earnedRuns: 90, hitsAllowed: 250, walksAllowed: 70, battersFaced: 1200, era: '2.70' } } },
+  { id: '4', name: '최에이스', uniformNumber: 1, position: '투수', primaryRole: '투수', batting: createBaseBatting(), pitching: { games: 25, wins: 15, losses: 5, saves: 0, innings: 160, strikeouts: 150, runsAllowed: 50, earnedRuns: 44, hitsAllowed: 130, walksAllowed: 40, battersFaced: 650, era: '2.48', career: { games: 130, wins: 65, losses: 35, saves: 2, innings: 850, strikeouts: 780, runsAllowed: 300, earnedRuns: 263, hitsAllowed: 700, walksAllowed: 210, battersFaced: 3500, era: '2.78' } } }
+];
+
+// --- 헬퍼 컴포넌트 ---
 function SortIcon({ currentSortKey, sortKey, currentDir }) {
   if (currentSortKey !== sortKey) return null;
   return currentDir === 'desc' ? <ChevronDown size={14} className="inline ml-1" /> : <ChevronUp size={14} className="inline ml-1" />;
@@ -106,16 +124,6 @@ function InningBox({ detail }) {
   );
 }
 
-const createBaseBatting = () => ({
-  games: 0, atBats: 0, runs: 0, hits: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000',
-  career: { games: 0, atBats: 0, runs: 0, hits: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000' }
-});
-
-const createBasePitching = () => ({
-  games: 0, wins: 0, losses: 0, saves: 0, innings: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, era: '0.00',
-  career: { games: 0, wins: 0, losses: 0, saves: 0, innings: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, era: '0.00' }
-});
-
 // ==========================================
 // 메인 App 컴포넌트
 // ==========================================
@@ -124,8 +132,13 @@ export default function App() {
   const [adminSubTab, setAdminSubTab] = useState('dashboard');
   const [showAddModal, setShowAddModal] = useState(false);
   
+  // 통산 기록 수정 모달
+  const [showCareerModal, setShowCareerModal] = useState(false);
+  const [careerPlayer, setCareerPlayer] = useState(null);
+  const [careerForm, setCareerForm] = useState({});
+
   // 선수 등록 모달용 상태
-  const [playerRole, setPlayerRole] = useState('타자'); // 타자, 투수, 투타겸업
+  const [playerRole, setPlayerRole] = useState('타자');
   const [formData, setFormData] = useState({
     name: '', uniformNumber: '', position: '',
     b_games: '', b_atBats: '', b_runs: '', b_hits: '', b_homeRuns: '', b_rbi: '',
@@ -135,6 +148,7 @@ export default function App() {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [runnerActionBase, setRunnerActionBase] = useState(null);
   const [detailTab, setDetailTab] = useState('summary');
+  const [openDropdownId, setOpenDropdownId] = useState(null);
 
   const [recordType, setRecordType] = useState('summary');
   const [batterSort, setBatterSort] = useState({ key: 'avg', dir: 'desc' });
@@ -160,34 +174,32 @@ export default function App() {
   const [pinchDist, setPinchDist] = useState(null);
   const bgContainerRef = useRef(null);
 
-  // 선수 배열 통합 (기본 데이터)
-  const [players, setPlayers] = useState([
-    { 
-      id: 1, name: '김타자', uniformNumber: 15, position: '중견수', primaryRole: '타자', 
-      batting: { games: 120, atBats: 400, runs: 80, hits: 120, homeRuns: 20, rbi: 75, walks: 30, strikeouts: 50, steals: 10, errors: 2, avg: '0.300', career: { games: 580, atBats: 1900, runs: 350, hits: 540, homeRuns: 85, rbi: 320, walks: 150, strikeouts: 300, steals: 45, errors: 12, avg: '0.284' } },
-      pitching: createBasePitching()
-    },
-    { 
-      id: 2, name: '이거포', uniformNumber: 52, position: '1루수', primaryRole: '타자',
-      batting: { games: 115, atBats: 380, runs: 65, hits: 95, homeRuns: 30, rbi: 90, walks: 45, strikeouts: 110, steals: 1, errors: 5, avg: '0.250', career: { games: 450, atBats: 1500, runs: 240, hits: 380, homeRuns: 105, rbi: 320, walks: 180, strikeouts: 420, steals: 3, errors: 20, avg: '0.253' } },
-      pitching: createBasePitching()
-    },
-    { 
-      id: 3, name: '박오타', uniformNumber: 17, position: '우익수', primaryRole: '투타겸업',
-      batting: { games: 130, atBats: 450, runs: 90, hits: 150, homeRuns: 40, rbi: 100, walks: 55, strikeouts: 40, steals: 30, errors: 1, avg: '0.333', career: { games: 300, atBats: 1000, runs: 200, hits: 320, homeRuns: 80, rbi: 220, walks: 120, strikeouts: 100, steals: 50, errors: 5, avg: '0.320' } },
-      pitching: { games: 15, wins: 10, losses: 2, saves: 0, innings: 100, strikeouts: 120, runsAllowed: 30, earnedRuns: 25, hitsAllowed: 80, walksAllowed: 20, battersFaced: 400, era: '2.25', career: { games: 50, wins: 30, losses: 10, saves: 0, innings: 300, strikeouts: 350, runsAllowed: 100, earnedRuns: 90, hitsAllowed: 250, walksAllowed: 70, battersFaced: 1200, era: '2.70' } }
-    },
-    { 
-      id: 4, name: '최에이스', uniformNumber: 1, position: '투수', primaryRole: '투수',
-      batting: createBaseBatting(),
-      pitching: { games: 25, wins: 15, losses: 5, saves: 0, innings: 160, strikeouts: 150, runsAllowed: 50, earnedRuns: 44, hitsAllowed: 130, walksAllowed: 40, battersFaced: 650, era: '2.48', career: { games: 130, wins: 65, losses: 35, saves: 2, innings: 850, strikeouts: 780, runsAllowed: 300, earnedRuns: 263, hitsAllowed: 700, walksAllowed: 210, battersFaced: 3500, era: '2.78' } }
-    },
-  ]);
+  // 로컬 스토리지 데이터 연동
+  const [players, setPlayers] = useState(() => {
+    const saved = localStorage.getItem('polaris_players');
+    if (saved) return JSON.parse(saved);
+    return defaultPlayersData;
+  });
 
-  const [gameResults, setGameResults] = useState([]);
+  const [gameResults, setGameResults] = useState(() => {
+    const saved = localStorage.getItem('polaris_games');
+    if (saved) return JSON.parse(saved);
+    return [];
+  });
 
   const [gameState, setGameState] = useState(null);
   const [changingPitcherTeam, setChangingPitcherTeam] = useState(null);
+
+  // 로컬 스토리지에 데이터 변경 시 자동 저장
+  useEffect(() => {
+    localStorage.setItem('polaris_players', JSON.stringify(players));
+  }, [players]);
+
+  useEffect(() => {
+    localStorage.setItem('polaris_games', JSON.stringify(gameResults));
+  }, [gameResults]);
+
+  const allPlayers = useMemo(() => players, [players]);
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -205,13 +217,13 @@ export default function App() {
 
   const handleAddRecord = (e) => {
     e.preventDefault();
-    const newId = players.length > 0 ? Math.max(...players.map(p => p.id)) + 1 : 1;
+    const newId = generateId();
     let newPlayer = {
       id: newId,
       name: formData.name,
       uniformNumber: parseInt(formData.uniformNumber) || 0,
       position: formData.position || '미정',
-      primaryRole: playerRole, // 타자, 투수, 투타겸업
+      primaryRole: playerRole, 
       batting: createBaseBatting(),
       pitching: createBasePitching()
     };
@@ -238,7 +250,7 @@ export default function App() {
       newPlayer.pitching.era = formData.p_era || '0.00';
     }
 
-    setPlayers([...players, newPlayer]);
+    setPlayers(prev => [...prev, newPlayer].sort((a,b) => a.uniformNumber - b.uniformNumber));
     setShowAddModal(false);
     setFormData({
       name: '', uniformNumber: '', position: '',
@@ -249,8 +261,99 @@ export default function App() {
 
   const handleDeletePlayer = (id) => {
     if (window.confirm('정말로 이 선수를 삭제하시겠습니까?')) {
-      setPlayers(players.filter(player => player.id !== id));
+      setPlayers(prev => prev.filter(player => player.id !== id));
     }
+  };
+
+  const handlePositionChange = (id, newPosition) => {
+    setPlayers(prev => prev.map(p => p.id === id ? { ...p, position: newPosition } : p));
+  };
+
+  const openCareerModal = (player) => {
+    setCareerPlayer(player);
+    setCareerForm({
+      b_games: player.batting.career.games || 0,
+      b_atBats: player.batting.career.atBats || 0,
+      b_runs: player.batting.career.runs || 0,
+      b_hits: player.batting.career.hits || 0,
+      b_homeRuns: player.batting.career.homeRuns || 0,
+      b_rbi: player.batting.career.rbi || 0,
+      b_walks: player.batting.career.walks || 0,
+      b_strikeouts: player.batting.career.strikeouts || 0,
+      b_steals: player.batting.career.steals || 0,
+      b_errors: player.batting.career.errors || 0,
+      p_games: player.pitching.career.games || 0,
+      p_wins: player.pitching.career.wins || 0,
+      p_losses: player.pitching.career.losses || 0,
+      p_saves: player.pitching.career.saves || 0,
+      p_innings: player.pitching.career.innings || 0,
+      p_strikeouts: player.pitching.career.strikeouts || 0,
+      p_runsAllowed: player.pitching.career.runsAllowed || 0,
+      p_earnedRuns: player.pitching.career.earnedRuns || 0,
+      p_hitsAllowed: player.pitching.career.hitsAllowed || 0,
+      p_walksAllowed: player.pitching.career.walksAllowed || 0,
+      p_battersFaced: player.pitching.career.battersFaced || 0,
+    });
+    setShowCareerModal(true);
+  };
+
+  const handleCareerInputChange = (e) => {
+    setCareerForm({ ...careerForm, [e.target.name]: e.target.value });
+  };
+
+  const handleSaveCareer = (e) => {
+    e.preventDefault();
+    setPlayers(prev => prev.map(p => {
+      if (p.id !== careerPlayer.id) return p;
+      
+      const b_hits = parseInt(careerForm.b_hits) || 0;
+      const b_ab = parseInt(careerForm.b_atBats) || 0;
+      const b_avg = b_ab > 0 ? (b_hits / b_ab).toFixed(3) : '0.000';
+      
+      const p_er = parseInt(careerForm.p_earnedRuns) || 0;
+      const p_ip = careerForm.p_innings;
+      const p_era = calculateEra(p_er, p_ip);
+
+      return {
+        ...p,
+        batting: {
+          ...p.batting,
+          career: {
+            games: parseInt(careerForm.b_games) || 0,
+            atBats: b_ab,
+            runs: parseInt(careerForm.b_runs) || 0,
+            hits: b_hits,
+            homeRuns: parseInt(careerForm.b_homeRuns) || 0,
+            rbi: parseInt(careerForm.b_rbi) || 0,
+            walks: parseInt(careerForm.b_walks) || 0,
+            strikeouts: parseInt(careerForm.b_strikeouts) || 0,
+            steals: parseInt(careerForm.b_steals) || 0,
+            errors: parseInt(careerForm.b_errors) || 0,
+            avg: b_avg
+          }
+        },
+        pitching: {
+          ...p.pitching,
+          career: {
+            games: parseInt(careerForm.p_games) || 0,
+            wins: parseInt(careerForm.p_wins) || 0,
+            losses: parseInt(careerForm.p_losses) || 0,
+            saves: parseInt(careerForm.p_saves) || 0,
+            innings: p_ip,
+            strikeouts: parseInt(careerForm.p_strikeouts) || 0,
+            runsAllowed: parseInt(careerForm.p_runsAllowed) || 0,
+            earnedRuns: p_er,
+            hitsAllowed: parseInt(careerForm.p_hitsAllowed) || 0,
+            walksAllowed: parseInt(careerForm.p_walksAllowed) || 0,
+            battersFaced: parseInt(careerForm.p_battersFaced) || 0,
+            era: p_era
+          }
+        }
+      };
+    }));
+    
+    setShowCareerModal(false);
+    setCareerPlayer(null);
   };
 
   const handleDeleteGameResult = (game) => {
@@ -303,7 +406,6 @@ export default function App() {
             updated.pitching.battersFaced = Math.max(0, (updated.pitching.battersFaced || 0) - (matchedPitcher.battersFaced || 0));
             updated.pitching.era = calculateEra(newEarnedRuns, newOuts);
           }
-
           return updated;
         }));
       }
@@ -743,7 +845,7 @@ export default function App() {
             runsAllowed: (app.stats.runsAllowed || 0) + runs,
             earnedRuns: (app.stats.earnedRuns || 0) + earned
           }
-        }
+        };
       }
       return app;
     });
@@ -975,6 +1077,126 @@ export default function App() {
     });
   };
 
+  const finalizeAndPersistGameStats = (finishedState) => {
+    if (!finishedState) return;
+
+    const polarisTeamKey = finishedState.mode === 'regular_play'
+      ? (finishedState.venue === 'home' ? 'teamB' : 'teamA')
+      : null;
+    const opponentTeamKey = finishedState.mode === 'regular_play'
+      ? (polarisTeamKey === 'teamA' ? 'teamB' : 'teamA')
+      : null;
+
+    const winningTeamKey = finishedState.teamA.score > finishedState.teamB.score ? 'teamA' : finishedState.teamB.score > finishedState.teamA.score ? 'teamB' : null;
+    const losingTeamKey = winningTeamKey === 'teamA' ? 'teamB' : winningTeamKey === 'teamB' ? 'teamA' : null;
+
+    const teamKeyToSeasonUpdater = (teamKey) => {
+      if (finishedState.mode === 'scrimmage_play') return true;
+      return teamKey === polarisTeamKey;
+    };
+
+    const updatedPlayers = players.map(player => {
+      let updated = { ...player, batting: { ...player.batting }, pitching: { ...player.pitching } };
+      
+      ['teamA', 'teamB'].forEach(teamKey => {
+        if (!teamKeyToSeasonUpdater(teamKey)) return;
+        const foundB = finishedState[teamKey].lineup.find(p => p.id === player.id);
+        if (foundB?.gameStats) updated.batting = updateBatterSeasonStats(updated.batting, foundB.gameStats);
+
+        const appearances = finishedState[teamKey]?.pitcherAppearances || [];
+        appearances.forEach((app, idx) => {
+          if (app.pitcherId === player.id) {
+            updated.pitching = updatePitcherSeasonStats(
+              updated.pitching,
+              app.stats,
+              winningTeamKey === teamKey && idx === 0,
+              losingTeamKey === teamKey && idx === 0
+            );
+          }
+        });
+      });
+      return updated;
+    });
+
+    setPlayers(updatedPlayers);
+
+    const isRegular = finishedState.mode === 'regular_play';
+    const opponentName = isRegular ? (finishedState.opponentName?.trim() || '상대팀') : '자체 청백전';
+    const home = isRegular ? (finishedState.venue === 'home' ? '폴라리스' : opponentName) : '백팀';
+    const away = isRegular ? (finishedState.venue === 'home' ? opponentName : '폴라리스') : '청팀';
+    const homeScore = finishedState.teamB.score;
+    const awayScore = finishedState.teamA.score;
+    
+    let result = '무';
+    if (isRegular) {
+      const polarisScore = finishedState.venue === 'home' ? homeScore : awayScore;
+      const opponentScore = finishedState.venue === 'home' ? awayScore : homeScore;
+      result = polarisScore > opponentScore ? '승' : polarisScore < opponentScore ? '패' : '무';
+    } else {
+      result = '-';
+    }
+    
+    const today = new Date().toISOString().slice(0, 10);
+    const viewTeamKey = isRegular ? polarisTeamKey : 'teamA';
+    const polarisSummary = finishedState.summary[viewTeamKey];
+    const opponentSummary = finishedState.summary[isRegular ? opponentTeamKey : 'teamB'];
+    const polarisPitcher = finishedState[viewTeamKey].pitcher;
+    const polarisPitcherStats = finishedState[viewTeamKey].pitcherGameStats;
+    const polarisPitchers = (finishedState[viewTeamKey].pitcherAppearances || []).map(app => ({
+      name: app.pitcherName,
+      uniformNumber: app.uniformNumber,
+      ...app.stats
+    }));
+
+    const detailPayload = {
+      inningScores: finishedState.inningScores,
+      summary: finishedState.summary,
+      opponentName,
+      venue: finishedState.venue,
+      playEvents: finishedState.playEvents,
+      lineup: finishedState[viewTeamKey].lineup.map((player, index) => ({
+        order: index + 1,
+        position: player.assignedPosition || player.position,
+        name: player.name,
+        uniformNumber: player.uniformNumber,
+        ...player.gameStats,
+        seasonAvg: player.avg
+      })),
+      pitcher: {
+        name: polarisPitcher?.name,
+        uniformNumber: polarisPitcher?.uniformNumber,
+        ...polarisPitcherStats
+      },
+      pitchers: polarisPitchers,
+      officials: { recorder: 'Polaris Record Mode' },
+      scoreboard: {
+        polaris: isRegular ? (finishedState.venue === 'home' ? homeScore : awayScore) : awayScore,
+        opponent: isRegular ? (finishedState.venue === 'home' ? awayScore : homeScore) : homeScore,
+        home, away, homeScore, awayScore
+      },
+      statBars: [
+        { label: '안타', left: opponentSummary?.hits || 0, right: polarisSummary?.hits || 0 },
+        { label: '홈런', left: opponentSummary?.homeRuns || 0, right: polarisSummary?.homeRuns || 0 },
+        { label: '도루', left: opponentSummary?.steals || 0, right: polarisSummary?.steals || 0 },
+        { label: '삼진', left: opponentSummary?.strikeouts || 0, right: polarisSummary?.strikeouts || 0 },
+        { label: '실책', left: opponentSummary?.errors || 0, right: polarisSummary?.errors || 0 },
+        { label: '사사구', left: opponentSummary?.walks || 0, right: polarisSummary?.walks || 0 }
+      ]
+    };
+
+    const newGameId = Date.now().toString();
+    const newGame = {
+      id: newGameId,
+      date: today,
+      opponent: opponentName,
+      home, away, homeScore, awayScore, result,
+      detail: detailPayload
+    };
+    
+    setGameResults(prev => ([newGame, ...prev]));
+    setActiveTab('records');
+  };
+
   const endGame = () => {
     if (window.confirm("현재 진행 중인 경기를 종료하고 기록을 저장하시겠습니까?")) {
       finalizeAndPersistGameStats(gameState);
@@ -1102,7 +1324,7 @@ export default function App() {
     e.target.value = '';
   };
 
-  const getPlayerKey = (player) => `${player.type}-${player.id}`;
+  const getPlayerKey = (player) => `${player.primaryRole}-${player.id}`;
 
   const handlePlayerPhotoUpload = async (player, file) => {
     if (!file || !player) return;
@@ -1621,7 +1843,12 @@ export default function App() {
     }
 
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+        {/* 드롭다운 외부 클릭 시 닫기 위한 오버레이 */}
+        {openDropdownId && (
+          <div className="fixed inset-0 z-40" onClick={() => setOpenDropdownId(null)}></div>
+        )}
+        
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-3xl font-black text-gray-800">관리자 모드</h2>
           <button onClick={() => setShowAddModal(true)} className="bg-slate-800 hover:bg-black text-white px-5 py-2.5 rounded-lg font-bold flex items-center space-x-2 transition-colors shadow-md">
@@ -1739,6 +1966,7 @@ export default function App() {
                   <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
                     <th className="p-4 font-semibold w-16 text-center">No.</th>
                     <th className="p-4 font-semibold">이름</th>
+                    <th className="p-4 font-semibold text-center">포지션</th>
                     <th className="p-4 font-semibold text-right">타율 (AVG)</th>
                     <th className="p-4 font-semibold text-right">경기 (G)</th>
                     <th className="p-4 font-semibold text-right">타수 (AB)</th>
@@ -1750,12 +1978,21 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-gray-800">
-                  {players.map(p => {
+                  {players.filter(p => ['타자', '투타겸업'].includes(p.primaryRole)).map(p => {
                     const stats = getBatterStats(p, 'season');
                     return (
                       <tr key={`admin-batter-${p.id}`} className="hover:bg-gray-50 transition-colors">
                         <td className="p-4 font-bold text-gray-400 text-center">{stats.uniformNumber}</td>
                         <td className="p-4 font-medium">{stats.name} <span className="text-xs text-gray-400 ml-1">{p.primaryRole}</span></td>
+                        <td className="p-4 text-center">
+                          <select
+                            value={p.position}
+                            onChange={(e) => handlePositionChange(p.id, e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded-lg text-xs font-bold outline-none focus:border-slate-800 bg-white cursor-pointer"
+                          >
+                            {POSITIONS.map(pos => <option key={`pos-opt-${p.id}-${pos}`} value={pos}>{pos}</option>)}
+                          </select>
+                        </td>
                         <td className="p-4 text-right font-semibold text-slate-800">{stats.avg}</td>
                         <td className="p-4 text-right">{stats.games}</td>
                         <td className="p-4 text-right">{stats.atBats}</td>
@@ -1763,8 +2000,28 @@ export default function App() {
                         <td className="p-4 text-right">{stats.hits}</td>
                         <td className="p-4 text-right">{stats.homeRuns}</td>
                         <td className="p-4 text-right">{stats.rbi}</td>
-                        <td className="p-4 text-center">
-                          <button onClick={() => handleDeletePlayer(p.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1" title="선수 삭제"><Trash2 size={18} /></button>
+                        <td className="p-4 text-center relative">
+                          <div className="flex items-center justify-center">
+                            <button onClick={() => setOpenDropdownId(openDropdownId === p.id ? null : p.id)} className="text-gray-400 hover:text-slate-800 transition-colors p-1" title="관리 메뉴">
+                              <MoreVertical size={18} />
+                            </button>
+                          </div>
+                          {openDropdownId === p.id && (
+                            <div className="absolute right-12 top-1/2 -translate-y-1/2 bg-white border border-gray-200 rounded-lg shadow-xl z-50 flex flex-col w-36 overflow-hidden">
+                              <button 
+                                onClick={() => { openCareerModal(p); setOpenDropdownId(null); }} 
+                                className="px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2 border-b border-gray-100"
+                              >
+                                <Edit size={14}/> 통산 기록
+                              </button>
+                              <button 
+                                onClick={() => { handleDeletePlayer(p.id); setOpenDropdownId(null); }} 
+                                className="px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 flex items-center gap-2"
+                              >
+                                <Trash2 size={14}/> 선수 삭제
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1783,6 +2040,7 @@ export default function App() {
                   <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
                     <th className="p-4 font-semibold w-16 text-center">No.</th>
                     <th className="p-4 font-semibold">이름</th>
+                    <th className="p-4 font-semibold text-center">포지션</th>
                     <th className="p-4 font-semibold text-right">ERA</th>
                     <th className="p-4 font-semibold text-right">G</th>
                     <th className="p-4 font-semibold text-right">W</th>
@@ -1794,12 +2052,21 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-gray-800">
-                  {players.map(p => {
+                  {players.filter(p => ['투수', '투타겸업'].includes(p.primaryRole)).map(p => {
                     const stats = getPitcherStats(p, 'season');
                     return (
                       <tr key={`admin-pitcher-${p.id}`} className="hover:bg-gray-50 transition-colors">
                         <td className="p-4 font-bold text-gray-400 text-center">{stats.uniformNumber}</td>
                         <td className="p-4 font-medium">{stats.name} <span className="text-xs text-gray-400 ml-1">{p.primaryRole}</span></td>
+                        <td className="p-4 text-center">
+                          <select
+                            value={p.position}
+                            onChange={(e) => handlePositionChange(p.id, e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded-lg text-xs font-bold outline-none focus:border-slate-800 bg-white cursor-pointer"
+                          >
+                            {POSITIONS.map(pos => <option key={`pos-opt-${p.id}-${pos}`} value={pos}>{pos}</option>)}
+                          </select>
+                        </td>
                         <td className="p-4 text-right font-semibold text-slate-800">{stats.era}</td>
                         <td className="p-4 text-right">{stats.games}</td>
                         <td className="p-4 text-right">{stats.wins}</td>
@@ -1807,8 +2074,28 @@ export default function App() {
                         <td className="p-4 text-right">{stats.saves}</td>
                         <td className="p-4 text-right">{stats.innings}</td>
                         <td className="p-4 text-right">{stats.strikeouts}</td>
-                        <td className="p-4 text-center">
-                          <button onClick={() => handleDeletePlayer(p.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1" title="선수 삭제"><Trash2 size={18} /></button>
+                        <td className="p-4 text-center relative">
+                          <div className="flex items-center justify-center">
+                            <button onClick={() => setOpenDropdownId(openDropdownId === p.id ? null : p.id)} className="text-gray-400 hover:text-slate-800 transition-colors p-1" title="관리 메뉴">
+                              <MoreVertical size={18} />
+                            </button>
+                          </div>
+                          {openDropdownId === p.id && (
+                            <div className="absolute right-12 top-1/2 -translate-y-1/2 bg-white border border-gray-200 rounded-lg shadow-xl z-50 flex flex-col w-36 overflow-hidden">
+                              <button 
+                                onClick={() => { openCareerModal(p); setOpenDropdownId(null); }} 
+                                className="px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2 border-b border-gray-100"
+                              >
+                                <Edit size={14}/> 통산 기록
+                              </button>
+                              <button 
+                                onClick={() => { handleDeletePlayer(p.id); setOpenDropdownId(null); }} 
+                                className="px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 flex items-center gap-2"
+                              >
+                                <Trash2 size={14}/> 선수 삭제
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -2103,6 +2390,71 @@ export default function App() {
 
       {selectedGameResult && renderGameResultDetail()}
       
+      {/* 통산 기록 관리 모달 */}
+      {showCareerModal && careerPlayer && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[90]">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
+              <div>
+                <h3 className="text-xl font-black text-gray-800">통산 기록 관리</h3>
+                <p className="text-sm text-gray-500 mt-1">{careerPlayer.name} (No.{careerPlayer.uniformNumber}) - {careerPlayer.primaryRole}</p>
+              </div>
+              <button onClick={() => setShowCareerModal(false)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+            </div>
+            
+            <div className="overflow-y-auto flex-grow p-6">
+              <form id="career-form" onSubmit={handleSaveCareer} className="space-y-8">
+                {['타자', '투타겸업'].includes(careerPlayer.primaryRole) && (
+                  <div>
+                    <h4 className="font-bold text-lg text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <span className="w-1 h-5 bg-blue-600 rounded"></span> 타자 통산 기록
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">경기수 (G)</label><input type="number" name="b_games" value={careerForm.b_games} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">타수 (AB)</label><input type="number" name="b_atBats" value={careerForm.b_atBats} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">득점 (R)</label><input type="number" name="b_runs" value={careerForm.b_runs} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">안타 (H)</label><input type="number" name="b_hits" value={careerForm.b_hits} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">홈런 (HR)</label><input type="number" name="b_homeRuns" value={careerForm.b_homeRuns} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">타점 (RBI)</label><input type="number" name="b_rbi" value={careerForm.b_rbi} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">볼넷 (BB)</label><input type="number" name="b_walks" value={careerForm.b_walks} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">삼진 (SO)</label><input type="number" name="b_strikeouts" value={careerForm.b_strikeouts} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">도루 (SB)</label><input type="number" name="b_steals" value={careerForm.b_steals} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">실책 (E)</label><input type="number" name="b_errors" value={careerForm.b_errors} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
+                    </div>
+                  </div>
+                )}
+
+                {['투수', '투타겸업'].includes(careerPlayer.primaryRole) && (
+                  <div>
+                    <h4 className="font-bold text-lg text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center gap-2">
+                      <span className="w-1 h-5 bg-emerald-500 rounded"></span> 투수 통산 기록
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">경기수 (G)</label><input type="number" name="p_games" value={careerForm.p_games} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">승 (W)</label><input type="number" name="p_wins" value={careerForm.p_wins} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">패 (L)</label><input type="number" name="p_losses" value={careerForm.p_losses} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">세이브 (SV)</label><input type="number" name="p_saves" value={careerForm.p_saves} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">이닝 (IP)</label><input type="number" step="0.1" name="p_innings" value={careerForm.p_innings} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">탈삼진 (SO)</label><input type="number" name="p_strikeouts" value={careerForm.p_strikeouts} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">실점 (R)</label><input type="number" name="p_runsAllowed" value={careerForm.p_runsAllowed} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">자책점 (ER)</label><input type="number" name="p_earnedRuns" value={careerForm.p_earnedRuns} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">피안타 (H)</label><input type="number" name="p_hitsAllowed" value={careerForm.p_hitsAllowed} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">볼넷 (BB)</label><input type="number" name="p_walksAllowed" value={careerForm.p_walksAllowed} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">상대타자 (BF)</label><input type="number" name="p_battersFaced" value={careerForm.p_battersFaced} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-emerald-500" min="0" /></div>
+                    </div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            <div className="flex justify-end space-x-3 p-6 border-t border-gray-100 flex-shrink-0 bg-gray-50">
+              <button type="button" onClick={() => setShowCareerModal(false)} className="px-5 py-2.5 rounded-lg text-gray-700 font-medium hover:bg-gray-200 transition-colors">취소</button>
+              <button type="submit" form="career-form" className="px-5 py-2.5 rounded-lg bg-slate-800 text-white font-medium hover:bg-black transition-colors shadow-sm">기록 저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedPlayer && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[70]" onClick={() => setSelectedPlayer(null)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col relative" onClick={e => e.stopPropagation()}>
@@ -2192,7 +2544,7 @@ export default function App() {
       )}
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center p-6 border-b border-gray-100 flex-shrink-0">
               <h3 className="text-xl font-bold text-gray-800">새 선수 등록</h3>
