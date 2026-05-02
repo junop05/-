@@ -1,31 +1,89 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon, ZoomIn, ZoomOut, Save, ChevronDown, ChevronUp, MoreVertical, Edit } from 'lucide-react';
+import { Users, Activity, Plus, Trophy, X, Shirt, Calendar, Camera, Trash2, PlayCircle, Settings, ClipboardList, RefreshCw, BarChart3, FastForward, ArrowLeft, Lock, Image as ImageIcon, ZoomIn, ZoomOut, Save, ChevronDown, ChevronUp, MoreVertical, Edit, Undo, Download, Award } from 'lucide-react';
+
+// === Firebase 모듈 임포트 ===
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+
+// --- 제공해주신 Firebase Config ---
+const firebaseConfig = {
+  apiKey: "AIzaSyACJx4P4OkcGp8y1Ym4LZHvC6LTgAM_aEs",
+  authDomain: "polaris-8a991.firebaseapp.com",
+  projectId: "polaris-8a991",
+  storageBucket: "polaris-8a991.firebasestorage.app",
+  messagingSenderId: "885335820774",
+  appId: "1:885335820774:web:b6bbdbe7e5ad0ab0aeee27",
+  measurementId: "G-4Y2RQYKCR2"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 const POSITIONS = ['투수', '포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수', '외야수', '내야수', '지명타자'];
 
 // --- 공통 유틸리티 함수 ---
-const generateId = () => {
+function generateId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID 
     ? crypto.randomUUID() 
     : Date.now().toString(36) + Math.random().toString(36).substring(2);
-};
+}
 
-const calculateBattingAverage = (hits, atBats) => (atBats > 0 ? (hits / atBats).toFixed(3) : '0.000');
+function calculateBattingAverage(hits, atBats) {
+  return atBats > 0 ? (hits / atBats).toFixed(3) : '0.000';
+}
 
-const parseBaseballInningsToOuts = (inningsValue) => {
+function parseBaseballInningsToOuts(inningsValue) {
   const raw = String(inningsValue ?? 0);
   if (!raw.includes('.')) return (parseInt(raw, 10) || 0) * 3;
   const [whole, decimal] = raw.split('.');
   return ((parseInt(whole, 10) || 0) * 3) + (parseInt(decimal, 10) || 0);
-};
+}
 
-const outsToBaseballInnings = (outs) => `${Math.floor((outs || 0) / 3)}.${(outs || 0) % 3}`;
+function outsToBaseballInnings(outs) {
+  return `${Math.floor((outs || 0) / 3)}.${(outs || 0) % 3}`;
+}
 
-const calculateEra = (earnedRuns, inningsOrOuts) => {
+function calculateEra(earnedRuns, inningsOrOuts) {
   const outs = Number.isInteger(inningsOrOuts) ? inningsOrOuts : parseBaseballInningsToOuts(inningsOrOuts);
   const ip = outs / 3;
   if (ip <= 0) return '0.00';
   return ((earnedRuns * 9) / ip).toFixed(2);
+}
+
+// 이미지 리사이징 함수
+const resizeImage = (file, maxWidth, maxHeight) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height *= maxWidth / width));
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width *= maxHeight / height));
+            height = maxHeight;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 };
 
 // --- 기본 기록 템플릿 ---
@@ -51,6 +109,55 @@ const defaultPlayersData = [
 function SortIcon({ currentSortKey, sortKey, currentDir }) {
   if (currentSortKey !== sortKey) return null;
   return currentDir === 'desc' ? <ChevronDown size={14} className="inline ml-1" /> : <ChevronUp size={14} className="inline ml-1" />;
+}
+
+function RadarChart({ data, color }) {
+  const size = 180;
+  const center = size / 2;
+  const radius = size / 2 - 20;
+
+  const getPoint = (value, index, max = 100) => {
+    const angle = (Math.PI * 2 * index) / 5 - Math.PI / 2;
+    const r = (value / max) * radius;
+    return `${center + r * Math.cos(angle)},${center + r * Math.sin(angle)}`;
+  };
+
+  const labels = data.map(d => String(d.label));
+  const values = data.map(d => Number(d.value) || 0);
+  const maxValues = data.map(d => Number(d.max) || 100);
+
+  const polygonPoints = values.map((val, i) => getPoint(val, i, maxValues[i])).join(' ');
+  const bgPolygons = [100, 80, 60, 40, 20].map(level => 
+    data.map((_, i) => getPoint(level, i, 100)).join(' ')
+  );
+
+  return (
+    <svg width="100%" height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible font-sans">
+      {bgPolygons.map((pts, idx) => (
+        <polygon key={`bg-poly-${idx}`} points={pts} fill="none" stroke="#e2e8f0" strokeWidth="1" />
+      ))}
+      {data.map((_, i) => {
+        const endPt = getPoint(100, i, 100);
+        const [ex, ey] = endPt.split(',');
+        return <line key={`axis-${i}`} x1={center} y1={center} x2={ex} y2={ey} stroke="#e2e8f0" strokeWidth="1" />;
+      })}
+      <polygon points={polygonPoints} fill={color} fillOpacity="0.4" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      {values.map((val, i) => {
+        const pt = getPoint(val, i, maxValues[i]);
+        const [cx, cy] = pt.split(',');
+        return <circle key={`dot-${i}`} cx={cx} cy={cy} r="3" fill={color} />;
+      })}
+      {labels.map((label, i) => {
+        const pt = getPoint(115, i, 100);
+        const [x, y] = pt.split(',');
+        return (
+          <text key={`label-${i}`} x={x} y={y} fontSize="10" fill="#64748b" textAnchor="middle" dominantBaseline="middle" fontWeight="bold">
+            {label}
+          </text>
+        );
+      })}
+    </svg>
+  );
 }
 
 function RankTable({ title, data, getValue, valueLabel }) {
@@ -131,6 +238,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('landing');
   const [adminSubTab, setAdminSubTab] = useState('dashboard');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [user, setUser] = useState(null);
   
   // 통산 기록 수정 모달
   const [showCareerModal, setShowCareerModal] = useState(false);
@@ -159,13 +267,16 @@ export default function App() {
 
   const currentSeasonYear = new Date().getFullYear();
   const seasonLabel = `${currentSeasonYear}시즌`;
-  const MEDIA_DB_NAME = 'polaris-media-db';
-  const MEDIA_STORE_NAME = 'media';
 
   const [manualBaseAssign, setManualBaseAssign] = useState(null);
+  const [selectedGameResult, setSelectedGameResult] = useState(null);
+
+  // Firestore 상태 연동 변수
+  const [players, setPlayers] = useState([]);
+  const [gameResults, setGameResults] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [galleryPosts, setGalleryPosts] = useState([]);
   const [playerPhotos, setPlayerPhotos] = useState({});
-  const [selectedGameResult, setSelectedGameResult] = useState(null);
   
   const [customBackground, setCustomBackground] = useState('/background.JPG');
   const [bgSettings, setBgSettings] = useState({ scale: 1, posX: 50, posY: 50 });
@@ -174,30 +285,83 @@ export default function App() {
   const [pinchDist, setPinchDist] = useState(null);
   const bgContainerRef = useRef(null);
 
-  // 로컬 스토리지 데이터 연동
-  const [players, setPlayers] = useState(() => {
-    const saved = localStorage.getItem('polaris_players');
-    if (saved) return JSON.parse(saved);
-    return defaultPlayersData;
-  });
-
-  const [gameResults, setGameResults] = useState(() => {
-    const saved = localStorage.getItem('polaris_games');
-    if (saved) return JSON.parse(saved);
-    return [];
-  });
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({ title: '', date: '', type: '훈련', location: '' });
+  const [showRsvpModal, setShowRsvpModal] = useState(null);
+  const [rsvpPlayerId, setRsvpPlayerId] = useState('');
+  const [rsvpStatus, setRsvpStatus] = useState('참석');
 
   const [gameState, setGameState] = useState(null);
+  const [gameStateHistory, setGameStateHistory] = useState([]);
   const [changingPitcherTeam, setChangingPitcherTeam] = useState(null);
+  const [showEndGameModal, setShowEndGameModal] = useState(false);
+  const [endGameMvp, setEndGameMvp] = useState('');
 
-  // 로컬 스토리지에 데이터 변경 시 자동 저장
+  // Firebase Auth Init
   useEffect(() => {
-    localStorage.setItem('polaris_players', JSON.stringify(players));
-  }, [players]);
+    const initAuth = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        console.error("Auth init error", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
+  // Firestore Data Sync
   useEffect(() => {
-    localStorage.setItem('polaris_games', JSON.stringify(gameResults));
-  }, [gameResults]);
+    if (!user) return;
+    
+    const unsubPlayers = onSnapshot(collection(db, 'polaris_players'), (snap) => {
+      const loaded = snap.docs.map(d => d.data());
+      setPlayers(loaded.sort((a,b) => a.uniformNumber - b.uniformNumber));
+    });
+
+    const unsubGames = onSnapshot(collection(db, 'polaris_games'), (snap) => {
+      const loaded = snap.docs.map(d => d.data());
+      setGameResults(loaded.sort((a,b) => b.id - a.id));
+    });
+
+    const unsubSchedules = onSnapshot(collection(db, 'polaris_schedules'), (snap) => {
+      const loaded = snap.docs.map(d => d.data());
+      setSchedules(loaded.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+    });
+
+    const unsubGallery = onSnapshot(collection(db, 'polaris_gallery'), (snap) => {
+      const loaded = snap.docs.map(d => d.data());
+      setGalleryPosts(loaded.sort((a,b) => b.id - a.id));
+    });
+
+    const unsubPhotos = onSnapshot(collection(db, 'polaris_playerPhotos'), (snap) => {
+      const loaded = snap.docs.map(d => d.data());
+      const photoMap = loaded.reduce((acc, item) => {
+        acc[item.playerKey] = item.imageUrl;
+        return acc;
+      }, {});
+      setPlayerPhotos(photoMap);
+    });
+
+    const unsubSettings = onSnapshot(collection(db, 'polaris_settings'), (snap) => {
+      const bgDoc = snap.docs.find(d => d.id === 'background_current');
+      if (bgDoc) {
+        const data = bgDoc.data();
+        if (data.imageUrl) setCustomBackground(data.imageUrl);
+        if (data.settings) setBgSettings(data.settings);
+      }
+    });
+
+    return () => {
+      unsubPlayers();
+      unsubGames();
+      unsubSchedules();
+      unsubGallery();
+      unsubPhotos();
+      unsubSettings();
+    };
+  }, [user]);
 
   const allPlayers = useMemo(() => players, [players]);
 
@@ -215,8 +379,9 @@ export default function App() {
     }
   };
 
-  const handleAddRecord = (e) => {
+  const handleAddRecord = async (e) => {
     e.preventDefault();
+    if (!user) return;
     const newId = generateId();
     let newPlayer = {
       id: newId,
@@ -237,7 +402,7 @@ export default function App() {
       newPlayer.batting.hits = hits;
       newPlayer.batting.homeRuns = parseInt(formData.b_homeRuns) || 0;
       newPlayer.batting.rbi = parseInt(formData.b_rbi) || 0;
-      newPlayer.batting.avg = atBats > 0 ? (hits / atBats).toFixed(3) : '0.000';
+      newPlayer.batting.avg = String(calculateBattingAverage(hits, atBats));
     } 
     
     if (['투수', '투타겸업'].includes(playerRole)) {
@@ -247,10 +412,11 @@ export default function App() {
       newPlayer.pitching.saves = parseInt(formData.p_saves) || 0;
       newPlayer.pitching.innings = parseInt(formData.p_innings) || 0;
       newPlayer.pitching.strikeouts = parseInt(formData.p_strikeouts) || 0;
-      newPlayer.pitching.era = formData.p_era || '0.00';
+      newPlayer.pitching.era = String(formData.p_era || '0.00');
     }
 
-    setPlayers(prev => [...prev, newPlayer].sort((a,b) => a.uniformNumber - b.uniformNumber));
+    await setDoc(doc(db, 'polaris_players', newPlayer.id.toString()), newPlayer);
+    
     setShowAddModal(false);
     setFormData({
       name: '', uniformNumber: '', position: '',
@@ -259,40 +425,45 @@ export default function App() {
     });
   };
 
-  const handleDeletePlayer = (id) => {
+  const handleDeletePlayer = async (id) => {
+    if (!user) return;
     if (window.confirm('정말로 이 선수를 삭제하시겠습니까?')) {
-      setPlayers(prev => prev.filter(player => player.id !== id));
+      await deleteDoc(doc(db, 'polaris_players', id.toString()));
     }
   };
 
-  const handlePositionChange = (id, newPosition) => {
-    setPlayers(prev => prev.map(p => p.id === id ? { ...p, position: newPosition } : p));
+  const handlePositionChange = async (id, newPosition) => {
+    if (!user) return;
+    const player = players.find(p => p.id === id);
+    if (player) {
+      await setDoc(doc(db, 'polaris_players', id.toString()), { ...player, position: newPosition });
+    }
   };
 
   const openCareerModal = (player) => {
     setCareerPlayer(player);
     setCareerForm({
-      b_games: player.batting.career.games || 0,
-      b_atBats: player.batting.career.atBats || 0,
-      b_runs: player.batting.career.runs || 0,
-      b_hits: player.batting.career.hits || 0,
-      b_homeRuns: player.batting.career.homeRuns || 0,
-      b_rbi: player.batting.career.rbi || 0,
-      b_walks: player.batting.career.walks || 0,
-      b_strikeouts: player.batting.career.strikeouts || 0,
-      b_steals: player.batting.career.steals || 0,
-      b_errors: player.batting.career.errors || 0,
-      p_games: player.pitching.career.games || 0,
-      p_wins: player.pitching.career.wins || 0,
-      p_losses: player.pitching.career.losses || 0,
-      p_saves: player.pitching.career.saves || 0,
-      p_innings: player.pitching.career.innings || 0,
-      p_strikeouts: player.pitching.career.strikeouts || 0,
-      p_runsAllowed: player.pitching.career.runsAllowed || 0,
-      p_earnedRuns: player.pitching.career.earnedRuns || 0,
-      p_hitsAllowed: player.pitching.career.hitsAllowed || 0,
-      p_walksAllowed: player.pitching.career.walksAllowed || 0,
-      p_battersFaced: player.pitching.career.battersFaced || 0,
+      b_games: player.batting?.career?.games || 0,
+      b_atBats: player.batting?.career?.atBats || 0,
+      b_runs: player.batting?.career?.runs || 0,
+      b_hits: player.batting?.career?.hits || 0,
+      b_homeRuns: player.batting?.career?.homeRuns || 0,
+      b_rbi: player.batting?.career?.rbi || 0,
+      b_walks: player.batting?.career?.walks || 0,
+      b_strikeouts: player.batting?.career?.strikeouts || 0,
+      b_steals: player.batting?.career?.steals || 0,
+      b_errors: player.batting?.career?.errors || 0,
+      p_games: player.pitching?.career?.games || 0,
+      p_wins: player.pitching?.career?.wins || 0,
+      p_losses: player.pitching?.career?.losses || 0,
+      p_saves: player.pitching?.career?.saves || 0,
+      p_innings: player.pitching?.career?.innings || 0,
+      p_strikeouts: player.pitching?.career?.strikeouts || 0,
+      p_runsAllowed: player.pitching?.career?.runsAllowed || 0,
+      p_earnedRuns: player.pitching?.career?.earnedRuns || 0,
+      p_hitsAllowed: player.pitching?.career?.hitsAllowed || 0,
+      p_walksAllowed: player.pitching?.career?.walksAllowed || 0,
+      p_battersFaced: player.pitching?.career?.battersFaced || 0,
     });
     setShowCareerModal(true);
   };
@@ -301,20 +472,21 @@ export default function App() {
     setCareerForm({ ...careerForm, [e.target.name]: e.target.value });
   };
 
-  const handleSaveCareer = (e) => {
+  const handleSaveCareer = async (e) => {
     e.preventDefault();
-    setPlayers(prev => prev.map(p => {
-      if (p.id !== careerPlayer.id) return p;
-      
+    if (!user) return;
+    const p = players.find(p => p.id === careerPlayer.id);
+    
+    if (p) {
       const b_hits = parseInt(careerForm.b_hits) || 0;
       const b_ab = parseInt(careerForm.b_atBats) || 0;
-      const b_avg = b_ab > 0 ? (b_hits / b_ab).toFixed(3) : '0.000';
+      const b_avg = String(calculateBattingAverage(b_hits, b_ab));
       
       const p_er = parseInt(careerForm.p_earnedRuns) || 0;
-      const p_ip = careerForm.p_innings;
-      const p_era = calculateEra(p_er, p_ip);
+      const p_ip = String(careerForm.p_innings || '0');
+      const p_era = String(calculateEra(p_er, p_ip));
 
-      return {
+      const updatedPlayer = {
         ...p,
         batting: {
           ...p.batting,
@@ -350,19 +522,22 @@ export default function App() {
           }
         }
       };
-    }));
+
+      await setDoc(doc(db, 'polaris_players', p.id.toString()), updatedPlayer);
+    }
     
     setShowCareerModal(false);
     setCareerPlayer(null);
   };
 
-  const handleDeleteGameResult = (game) => {
-    if (window.confirm('정말로 이 경기 기록을 삭제하시겠습니까?\n(해당 경기의 선수 누적 스탯도 함께 차감됩니다.)')) {
+  const handleDeleteGameResult = async (game) => {
+    if (!user) return;
+    if (window.confirm('정말로 이 경기 기록을 삭제하시겠습니까?\n(해당 경기의 선수 누적 스탯도 함께 차감되며 클라우드에 반영됩니다.)')) {
       if (game.detail) {
-        setPlayers(prev => prev.map(p => {
+        for (const p of players) {
           let updated = { ...p, batting: { ...p.batting }, pitching: { ...p.pitching } };
-          
-          // 타격 기록 롤백
+          let changed = false;
+
           const matchedBatter = game.detail.lineup?.find(pb => pb.name === p.name && pb.uniformNumber === p.uniformNumber);
           if (matchedBatter) {
             const atBats = Math.max(0, (updated.batting.atBats || 0) - (matchedBatter.atBats || 0));
@@ -377,10 +552,10 @@ export default function App() {
             updated.batting.strikeouts = Math.max(0, (updated.batting.strikeouts || 0) - (matchedBatter.strikeouts || 0));
             updated.batting.steals = Math.max(0, (updated.batting.steals || 0) - (matchedBatter.steals || 0));
             updated.batting.errors = Math.max(0, (updated.batting.errors || 0) - (matchedBatter.errors || 0));
-            updated.batting.avg = calculateBattingAverage(hits, atBats);
+            updated.batting.avg = String(calculateBattingAverage(hits, atBats));
+            changed = true;
           }
 
-          // 투구 기록 롤백
           const matchedPitcher = game.detail.pitchers?.find(pp => pp.name === p.name && pp.uniformNumber === p.uniformNumber);
           if (matchedPitcher) {
             const newOuts = Math.max(0, parseBaseballInningsToOuts(updated.pitching.innings) - (matchedPitcher.inningsOuts || 0));
@@ -397,33 +572,123 @@ export default function App() {
             updated.pitching.games = Math.max(0, (updated.pitching.games || 0) - 1);
             updated.pitching.wins = Math.max(0, (updated.pitching.wins || 0) - winsToSubtract);
             updated.pitching.losses = Math.max(0, (updated.pitching.losses || 0) - lossesToSubtract);
-            updated.pitching.innings = newInnings;
+            updated.pitching.innings = String(newInnings);
             updated.pitching.strikeouts = Math.max(0, (updated.pitching.strikeouts || 0) - (matchedPitcher.strikeouts || 0));
             updated.pitching.runsAllowed = Math.max(0, (updated.pitching.runsAllowed || 0) - (matchedPitcher.runsAllowed || 0));
             updated.pitching.earnedRuns = newEarnedRuns;
             updated.pitching.hitsAllowed = Math.max(0, (updated.pitching.hitsAllowed || 0) - (matchedPitcher.hitsAllowed || 0));
             updated.pitching.walksAllowed = Math.max(0, (updated.pitching.walksAllowed || 0) - (matchedPitcher.walksAllowed || 0));
             updated.pitching.battersFaced = Math.max(0, (updated.pitching.battersFaced || 0) - (matchedPitcher.battersFaced || 0));
-            updated.pitching.era = calculateEra(newEarnedRuns, newOuts);
+            updated.pitching.era = String(calculateEra(newEarnedRuns, newOuts));
+            changed = true;
           }
-          return updated;
-        }));
+          
+          if (changed) {
+            await setDoc(doc(db, 'polaris_players', p.id.toString()), updated);
+          }
+        }
       }
-      setGameResults(prev => prev.filter(g => g.id !== game.id));
+      
+      await deleteDoc(doc(db, 'polaris_games', game.id.toString()));
     }
+  };
+
+  const handleAddSchedule = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    const newId = generateId();
+    const newSchedule = {
+      id: newId,
+      ...scheduleForm,
+      rsvps: {} 
+    };
+    await setDoc(doc(db, 'polaris_schedules', newId), newSchedule);
+    setShowScheduleModal(false);
+    setScheduleForm({ title: '', date: '', type: '훈련', location: '' });
+  };
+
+  const handleDeleteSchedule = async (id) => {
+    if (!user) return;
+    if (window.confirm("일정을 삭제하시겠습니까?")) {
+      await deleteDoc(doc(db, 'polaris_schedules', id.toString()));
+    }
+  };
+
+  const handleRsvpSubmit = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    if (!rsvpPlayerId) return alert("선수를 선택해주세요.");
+    
+    const schedule = schedules.find(s => s.id === showRsvpModal);
+    if (schedule) {
+      const updatedSchedule = { ...schedule, rsvps: { ...schedule.rsvps, [rsvpPlayerId]: rsvpStatus } };
+      await setDoc(doc(db, 'polaris_schedules', schedule.id.toString()), updatedSchedule);
+    }
+    setShowRsvpModal(null);
+    setRsvpPlayerId('');
+  };
+
+  const downloadLineupCard = () => {
+    if (!gameState) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 800; canvas.height = 1000;
+    const ctx = canvas.getContext('2d');
+    
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 800, 1000);
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 40px "Malgun Gothic"';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${gameState.teamA.name} vs ${gameState.teamB.name}`, 400, 80);
+    
+    ctx.font = '20px "Malgun Gothic"';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('STARTING LINEUP', 400, 120);
+    
+    const drawTeam = (team, xOffset) => {
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 28px "Malgun Gothic"';
+      ctx.textAlign = 'center';
+      ctx.fillText(team.name, xOffset, 200);
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 22px "Malgun Gothic"';
+      team.lineup.forEach((player, i) => {
+        if(player.playerId) {
+          ctx.fillText(`${i+1}. ${player.assignedPosition} ${player.name}`, xOffset, 260 + (i * 50));
+        }
+      });
+      
+      ctx.fillStyle = '#ffb703';
+      ctx.fillText(`P. ${team.pitcher?.name || '미정'}`, xOffset, 260 + (9 * 50) + 40);
+    };
+    
+    drawTeam(gameState.teamA, 220);
+    drawTeam(gameState.teamB, 580);
+    
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(400, 160);
+    ctx.lineTo(400, 900);
+    ctx.stroke();
+
+    const link = document.createElement('a');
+    link.download = `lineup_${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
   };
 
   const handleBackgroundUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
     try {
-      const imageUrl = await fileToDataUrl(file);
+      const imageUrl = await resizeImage(file, 1600, 1200);
       setCustomBackground(imageUrl);
       setBgSettings({ scale: 1, posX: 50, posY: 50 });
-      await putMediaItem({
-        key: 'background:current',
-        type: 'background',
+      await setDoc(doc(db, 'polaris_settings', 'background_current'), {
         imageUrl,
         settings: { scale: 1, posX: 50, posY: 50 },
         updatedAt: Date.now()
@@ -437,23 +702,21 @@ export default function App() {
   };
 
   const saveBackgroundSettings = async () => {
-    await putMediaItem({
-      key: 'background:current',
-      type: 'background',
+    if (!user) return;
+    await setDoc(doc(db, 'polaris_settings', 'background_current'), {
       imageUrl: customBackground,
       settings: bgSettings,
       updatedAt: Date.now()
-    });
+    }, { merge: true });
     alert('배경 화면 위치 및 크기가 성공적으로 저장되었습니다.');
   };
 
   const resetBackground = async () => {
+    if (!user) return;
     const defaultSettings = { scale: 1, posX: 50, posY: 50 };
     setCustomBackground('/background.JPG');
     setBgSettings(defaultSettings);
-    await putMediaItem({
-      key: 'background:current',
-      type: 'background',
+    await setDoc(doc(db, 'polaris_settings', 'background_current'), {
       imageUrl: '/background.JPG',
       settings: defaultSettings,
       updatedAt: Date.now()
@@ -521,9 +784,19 @@ export default function App() {
     setIsDragging(false);
   };
 
-  // ----------------------------------------------------
-  // 경기 기록 모드 로직
-  // ----------------------------------------------------
+  const executeWithHistory = (actionFn) => {
+    setGameStateHistory(prev => [...prev.slice(-19), JSON.parse(JSON.stringify(gameState))]);
+    actionFn();
+  };
+
+  const handleUndo = () => {
+    if (gameStateHistory.length > 0) {
+      const previousState = gameStateHistory[gameStateHistory.length - 1];
+      setGameState(previousState);
+      setGameStateHistory(prev => prev.slice(0, -1));
+    }
+  };
+
   const startScrimmageSetup = () => {
     setGameState({
       mode: 'scrimmage_setup',
@@ -547,6 +820,7 @@ export default function App() {
       bases: [null, null, null],
       logs: []
     });
+    setGameStateHistory([]);
   };
 
   const startRegularSetup = () => {
@@ -574,6 +848,7 @@ export default function App() {
       bases: [null, null, null],
       logs: []
     });
+    setGameStateHistory([]);
   };
 
   const handlePitcherChange = (team, value) => {
@@ -664,7 +939,7 @@ export default function App() {
       }
 
       const pitcherRawId = gameState[team].pitcherId;
-      const pitcher = players.find(p => p.id.toString() === pitcherRawId.toString());
+      const pitcher = players.find(p => String(p.id) === String(pitcherRawId));
 
       if (!pitcher) {
         alert(`투수 정보 오류가 발생했습니다.`);
@@ -680,7 +955,7 @@ export default function App() {
       }
 
       const mappedLineup = validBatters.map(b => {
-        const player = players.find(p => p.id.toString() === b.playerId.toString());
+        const player = players.find(p => String(p.id) === String(b.playerId));
         return {
           ...player,
           assignedPosition: b.assignedPosition || (player ? player.position : '미정')
@@ -705,133 +980,232 @@ export default function App() {
   };
 
   const executePitcherChange = (teamKey, newPitcherIdRaw) => {
-    if (!newPitcherIdRaw) {
+    executeWithHistory(() => {
+      if (!newPitcherIdRaw) {
+        setChangingPitcherTeam(null);
+        return;
+      }
+      const newPitcher = players.find(p => String(p.id) === String(newPitcherIdRaw));
+      if (newPitcher) {
+        setGameState(prev => {
+          const safePrev = normalizeGameStateForTracking(prev);
+          let newLogs = [...safePrev.logs];
+          newLogs.unshift(`[투수 교체] ${safePrev[teamKey].name} : ${safePrev[teamKey].pitcher.name} → ${newPitcher.name}`);
+          return {
+            ...safePrev,
+            logs: newLogs,
+            [teamKey]: {
+              ...safePrev[teamKey],
+              pitcher: newPitcher,
+              pitcherId: newPitcherIdRaw,
+              pitcherAppearances: [
+                ...safePrev[teamKey].pitcherAppearances,
+                {
+                  pitcherId: newPitcher.id,
+                  pitcherName: newPitcher.name,
+                  uniformNumber: newPitcher.uniformNumber,
+                  stats: { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, errorRuns: 0 }
+                }
+              ]
+            }
+          };
+        });
+      }
       setChangingPitcherTeam(null);
-      return;
-    }
-    const newPitcher = players.find(p => p.id.toString() === newPitcherIdRaw.toString());
-    if (newPitcher) {
-      setGameState(prev => {
-        const safePrev = normalizeGameStateForTracking(prev);
-        let newLogs = [...safePrev.logs];
-        newLogs.unshift(`[투수 교체] ${safePrev[teamKey].name} : ${safePrev[teamKey].pitcher.name} → ${newPitcher.name}`);
-        return {
-          ...safePrev,
-          logs: newLogs,
-          [teamKey]: {
-            ...safePrev[teamKey],
-            pitcher: newPitcher,
-            pitcherId: newPitcherIdRaw,
-            pitcherAppearances: [
-              ...safePrev[teamKey].pitcherAppearances,
-              {
-                pitcherId: newPitcher.id,
-                pitcherName: newPitcher.name,
-                uniformNumber: newPitcher.uniformNumber,
-                stats: { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, errorRuns: 0 }
-              }
-            ]
-          }
-        };
-      });
-    }
-    setChangingPitcherTeam(null);
+    });
   };
 
   const handleRunnerAction = (baseIndex, actionType) => {
-    setRunnerActionBase(null);
-    setGameState(prev => {
-      let state = normalizeGameStateForTracking(prev);
-      let newBases = [...state.bases];
-      const battingTeam = state.half === 'top' ? 'teamA' : 'teamB';
-      const defenseTeam = state.half === 'top' ? 'teamB' : 'teamA';
-      let newScore = state[battingTeam].score;
-      let newLogs = [...state.logs];
-      let newPlayEvents = [...state.playEvents];
-      let runsScored = 0;
-      let newOuts = state.outs;
-      let earnedRunsToPitcher = 0;
-      let runsToPitcher = 0;
+    executeWithHistory(() => {
+      setRunnerActionBase(null);
+      setGameState(prev => {
+        let state = normalizeGameStateForTracking(prev);
+        let newBases = [...state.bases];
+        const battingTeam = state.half === 'top' ? 'teamA' : 'teamB';
+        const defenseTeam = state.half === 'top' ? 'teamB' : 'teamA';
+        let newScore = state[battingTeam].score;
+        let newLogs = [...state.logs];
+        let newPlayEvents = [...state.playEvents];
+        let runsScored = 0;
+        let newOuts = state.outs;
+        let earnedRunsToPitcher = 0;
+        let runsToPitcher = 0;
 
-      const baseName = baseIndex === 0 ? '1루' : baseIndex === 1 ? '2루' : '3루';
-      const runnerObj = newBases[baseIndex];
-      const runnerName = runnerObj?.name;
+        const baseName = baseIndex === 0 ? '1루' : baseIndex === 1 ? '2루' : '3루';
+        const runnerObj = newBases[baseIndex];
+        const runnerName = runnerObj?.name;
 
-      if (actionType === '주루사') {
-        newBases[baseIndex] = null;
-        newOuts += 1;
-        newLogs.unshift(`[${state.inning}회${state.half === 'top' ? '초' : '말'}] ${baseName} 주자(${runnerName}) 주루사 - 아웃`);
-        newPlayEvents.unshift(`${baseName} 주자 ${runnerName} 주루사`);
-      } else {
-        for (let i = 2; i >= baseIndex; i--) {
-          if (newBases[i]) {
-            if (i === 2) {
-              runsScored++;
-              runsToPitcher++;
-              if (newBases[i].isEarned) earnedRunsToPitcher++;
-              newBases[i] = null;
-            } else {
-              newBases[i + 1] = newBases[i];
-              newBases[i] = null;
+        if (actionType === '주루사') {
+          newBases[baseIndex] = null;
+          newOuts += 1;
+          newLogs.unshift(`[${state.inning}회${state.half === 'top' ? '초' : '말'}] ${baseName} 주자(${runnerName}) 주루사 - 아웃`);
+          newPlayEvents.unshift(`${baseName} 주자 ${runnerName} 주루사`);
+        } else {
+          for (let i = 2; i >= baseIndex; i--) {
+            if (newBases[i]) {
+              if (i === 2) {
+                runsScored++;
+                runsToPitcher++;
+                if (newBases[i].isEarned) earnedRunsToPitcher++;
+                newBases[i] = null;
+              } else {
+                newBases[i + 1] = newBases[i];
+                newBases[i] = null;
+              }
             }
           }
+          newScore += runsScored;
+          newLogs.unshift(`[${state.inning}회${state.half === 'top' ? '초' : '말'}] ${baseName} 주자(${runnerName}) ${actionType}로 진루${runsScored > 0 ? ' (+' + runsScored + '득점)' : ''}`);
+          newPlayEvents.unshift(`${baseName} 주자 ${runnerName} ${actionType}`);
+
+          const nextTeam = {
+            ...state[battingTeam],
+            lineup: state[battingTeam].lineup.map(player => player.name === runnerName ? {
+              ...player,
+              gameStats: {
+                ...player.gameStats,
+                steals: (player.gameStats?.steals || 0) + (actionType === '도루' ? 1 : 0),
+                runs: (player.gameStats?.runs || 0) + (runsScored > 0 ? 1 : 0)
+              }
+            } : player)
+          };
+          state = { ...state, [battingTeam]: nextTeam };
         }
-        newScore += runsScored;
-        newLogs.unshift(`[${state.inning}회${state.half === 'top' ? '초' : '말'}] ${baseName} 주자(${runnerName}) ${actionType}로 진루${runsScored > 0 ? ` (+${runsScored}득점)` : ''}`);
-        newPlayEvents.unshift(`${baseName} 주자 ${runnerName} ${actionType}`);
 
-        const nextTeam = {
-          ...state[battingTeam],
-          lineup: state[battingTeam].lineup.map(player => player.name === runnerName ? {
-            ...player,
-            gameStats: {
-              ...player.gameStats,
-              steals: (player.gameStats.steals || 0) + (actionType === '도루' ? 1 : 0),
-              runs: (player.gameStats.runs || 0) + (runsScored > 0 ? 1 : 0)
-            }
-          } : player)
-        };
-        state = { ...state, [battingTeam]: nextTeam };
-      }
-
-      state = {
-        ...state,
-        bases: newBases,
-        outs: newOuts,
-        logs: newLogs,
-        playEvents: newPlayEvents,
-        [battingTeam]: {
-          ...state[battingTeam],
-          score: newScore
-        },
-        summary: {
-          ...state.summary,
+        state = {
+          ...state,
+          bases: newBases,
+          outs: newOuts,
+          logs: newLogs,
+          playEvents: newPlayEvents,
           [battingTeam]: {
-            ...state.summary[battingTeam],
-            steals: (state.summary[battingTeam]?.steals || 0) + (actionType === '도루' ? 1 : 0)
+            ...state[battingTeam],
+            score: newScore
+          },
+          summary: {
+            ...state.summary,
+            [battingTeam]: {
+              ...state.summary[battingTeam],
+              steals: (state.summary[battingTeam]?.steals || 0) + (actionType === '도루' ? 1 : 0)
+            }
           }
+        };
+
+        if (runsToPitcher > 0 && runnerObj?.respPitcher) {
+          state = addPitcherRuns(state, defenseTeam, runnerObj.respPitcher, runsToPitcher, earnedRunsToPitcher);
+        }
+
+        state = advanceInningScore(state, battingTeam, runsScored);
+
+        let newInning = state.inning;
+        let newHalf = state.half;
+        let finalBases = state.bases;
+        if (state.outs >= 3) {
+          newLogs.unshift(`[${newInning}회${state.half === 'top' ? '초' : '말'} 종료] 쓰리아웃 공수교대`);
+          if (newHalf === 'top') newHalf = 'bottom';
+          else { newHalf = 'top'; newInning += 1; }
+          finalBases = [null, null, null];
+          return { ...state, inning: newInning, half: newHalf, outs: 0, bases: finalBases, logs: newLogs };
+        }
+
+        return state;
+      });
+    });
+  };
+
+  const normalizeGameStateForTracking = (state) => {
+    const createPitchingLine = (pitcher) => ({
+      pitcherId: pitcher?.id || null,
+      pitcherName: pitcher?.name || '미정',
+      uniformNumber: pitcher?.uniformNumber || '',
+      stats: { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, errorRuns: 0 }
+    });
+
+    const ensureTeam = (team) => {
+      const totalPitching = team?.pitcherGameStats || { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, errorRuns: 0 };
+      const pitcherAppearances = team?.pitcherAppearances?.length ? team.pitcherAppearances : (team?.pitcher ? [createPitchingLine(team.pitcher)] : []);
+      return {
+        ...team,
+        score: team?.score || 0,
+        batterIndex: team?.batterIndex || 0,
+        lineup: (team?.lineup || []).map(player => ({
+          ...player,
+          gameStats: {
+            pa: 0, atBats: 0, hits: 0, singles: 0, doubles: 0, triples: 0, homeRuns: 0, rbi: 0, runs: 0, walks: 0, strikeouts: 0, steals: 0, sacrifices: 0, sacFlies: 0, sacBunts: 0, errors: 0, resultByInning: {}, ...(player.gameStats || {})
+          },
+          defensiveErrors: player.defensiveErrors || 0
+        })),
+        pitcherGameStats: totalPitching,
+        pitcherAppearances
+      };
+    };
+
+    return {
+      ...state,
+      teamA: ensureTeam(state.teamA),
+      teamB: ensureTeam(state.teamB),
+      inningScores: state.inningScores || {},
+      unearnedRunCredits: state.unearnedRunCredits || { teamA: 0, teamB: 0 },
+      summary: state.summary || {
+        teamA: { hits: 0, homeRuns: 0, steals: 0, strikeouts: 0, errors: 0, walks: 0 },
+        teamB: { hits: 0, homeRuns: 0, steals: 0, strikeouts: 0, errors: 0, walks: 0 }
+      },
+      playEvents: state.playEvents || []
+    };
+  };
+
+  const advanceInningScore = (state, battingTeamKey, runsScored) => {
+    if (!runsScored) return state;
+    const key = `${state.inning}-${state.half}`;
+    return {
+      ...state,
+      inningScores: {
+        ...state.inningScores,
+        [key]: {
+          ...(state.inningScores[key] || { teamA: 0, teamB: 0 }),
+          [battingTeamKey]: ((state.inningScores[key] || { teamA: 0, teamB: 0 })[battingTeamKey] || 0) + runsScored
+        }
+      }
+    };
+  };
+
+  const registerPlateAppearance = (state, battingTeamKey, currentBatter, updates) => {
+    const nextTeam = { ...state[battingTeamKey] };
+    nextTeam.lineup = nextTeam.lineup.map(player => {
+      if (player.id !== currentBatter.id) return player;
+      const gameStats = {
+        ...player.gameStats,
+        ...updates,
+        pa: (player.gameStats.pa || 0) + 1,
+        resultByInning: {
+          ...player.gameStats.resultByInning,
+          [`${state.inning}`]: [...(player.gameStats.resultByInning?.[`${state.inning}`] || []), updates.label || '']
         }
       };
-
-      if (runsToPitcher > 0 && runnerObj?.respPitcher) {
-        state = addPitcherRuns(state, defenseTeam, runnerObj.respPitcher, runsToPitcher, earnedRunsToPitcher);
-      }
-
-      state = advanceInningScore(state, battingTeam, runsScored);
-
-      let newInning = state.inning;
-      let newHalf = state.half;
-      let finalBases = state.bases;
-      if (state.outs >= 3) {
-        newLogs.unshift(`[${newInning}회${state.half === 'top' ? '초' : '말'} 종료] 쓰리아웃 공수교대`);
-        if (newHalf === 'top') newHalf = 'bottom';
-        else { newHalf = 'top'; newInning += 1; }
-        finalBases = [null, null, null];
-        return { ...state, inning: newInning, half: newHalf, outs: 0, bases: finalBases, logs: newLogs };
-      }
-
-      return state;
+      return { ...player, gameStats };
     });
+    return { ...state, [battingTeamKey]: nextTeam };
+  };
+
+  const incrementDefenseError = (state, defenseTeamKey, position) => {
+    const target = state[defenseTeamKey].lineup.find(player => player.assignedPosition === position || player.position === position);
+    const nextTeam = { ...state[defenseTeamKey] };
+    nextTeam.lineup = nextTeam.lineup.map(player => {
+      if (!target || player.id !== target.id) return player;
+      return {
+        ...player,
+        gameStats: { ...player.gameStats, errors: (player.gameStats.errors || 0) + 1 },
+        defensiveErrors: (player.defensiveErrors || 0) + 1
+      };
+    });
+    return {
+      ...state,
+      [defenseTeamKey]: nextTeam,
+      summary: {
+        ...state.summary,
+        [defenseTeamKey]: { ...state.summary[defenseTeamKey], errors: (state.summary[defenseTeamKey]?.errors || 0) + 1 }
+      }
+    };
   };
 
   const addPitcherRuns = (state, defenseTeam, pitcherId, runs, earned) => {
@@ -855,230 +1229,296 @@ export default function App() {
   };
 
   const handleGameAction = (actionLabel, isOut, basesToAdvance) => {
-    setGameState(prev => {
-      let state = normalizeGameStateForTracking(prev);
-      const isTop = state.half === 'top';
-      const battingTeam = isTop ? 'teamA' : 'teamB';
-      const defenseTeam = isTop ? 'teamB' : 'teamA';
-      const currentBatter = state[battingTeam].lineup[state[battingTeam].batterIndex];
-      const currentPitcher = state[defenseTeam].pitcher;
+    executeWithHistory(() => {
+      setGameState(prev => {
+        let state = normalizeGameStateForTracking(prev);
+        const isTop = state.half === 'top';
+        const battingTeam = isTop ? 'teamA' : 'teamB';
+        const defenseTeam = isTop ? 'teamB' : 'teamA';
+        const currentBatter = state[battingTeam].lineup[state[battingTeam].batterIndex];
+        const currentPitcher = state[defenseTeam].pitcher;
 
-      let newOuts = state.outs;
-      let newLogs = [...state.logs];
-      let newPlayEvents = [...state.playEvents];
-      let newBases = [...state.bases];
-      let newScore = state[battingTeam].score;
-      let runsScored = 0;
-      let runsToPitchers = [];
+        let newOuts = state.outs;
+        let newLogs = [...state.logs];
+        let newPlayEvents = [...state.playEvents];
+        let newBases = [...state.bases];
+        let newScore = state[battingTeam].score;
+        let runsScored = 0;
+        let runsToPitchers = [];
 
-      let countAsAtBat = !['볼넷', '사구', '희생번트', '희생플라이'].includes(actionLabel);
-      let countAsHit = ['안타', '2루타', '3루타', '홈런'].includes(actionLabel);
-      let plateUpdates = {
-        label: actionLabel,
-        atBats: countAsAtBat ? 1 : 0,
-        hits: countAsHit ? 1 : 0,
-        homeRuns: actionLabel === '홈런' ? 1 : 0,
-        walks: ['볼넷', '사구'].includes(actionLabel) ? 1 : 0,
-        strikeouts: actionLabel === '삼진' ? 1 : 0,
-        rbi: 0, runs: 0, steals: 0, errors: 0
-      };
-      let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
+        let countAsAtBat = !['볼넷', '사구', '희생번트', '희생플라이'].includes(actionLabel);
+        let countAsHit = ['안타', '2루타', '3루타', '홈런'].includes(actionLabel);
+        let plateUpdates = {
+          label: actionLabel,
+          atBats: countAsAtBat ? 1 : 0,
+          hits: countAsHit ? 1 : 0,
+          homeRuns: actionLabel === '홈런' ? 1 : 0,
+          walks: ['볼넷', '사구'].includes(actionLabel) ? 1 : 0,
+          strikeouts: actionLabel === '삼진' ? 1 : 0,
+          rbi: 0, runs: 0, steals: 0, errors: 0
+        };
+        let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
 
-      const isErrorPlay = actionLabel.startsWith('실책-');
-      const isFielderChoice = actionLabel === '야수선택';
-      const isDoublePlay = actionLabel === '병살타';
+        const isErrorPlay = actionLabel.startsWith('실책-');
+        const isFielderChoice = actionLabel === '야수선택';
+        const isDoublePlay = actionLabel === '병살타';
 
-      const processRunnerScoring = (runnerObj) => {
-        runsScored++;
-        runsToPitchers.push({
-          pitcherId: runnerObj.respPitcher,
-          earned: runnerObj.isEarned && !isErrorPlay
-        });
-      };
+        const processRunnerScoring = (runnerObj) => {
+          runsScored++;
+          runsToPitchers.push({
+            pitcherId: runnerObj.respPitcher,
+            earned: runnerObj.isEarned && !isErrorPlay
+          });
+        };
 
-      if (isErrorPlay) {
-        const position = actionLabel.replace('실책-', '');
-        plateUpdates.label = `${position} 실책`;
-        plateUpdates.atBats = 1;
-        state = incrementDefenseError(state, defenseTeam, position);
-        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${position} 실책으로 출루`);
-        newPlayEvents.unshift(`${position} 실책`);
+        if (isErrorPlay) {
+          const position = actionLabel.replace('실책-', '');
+          plateUpdates.label = `${position} 실책`;
+          plateUpdates.atBats = 1;
+          state = incrementDefenseError(state, defenseTeam, position);
+          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${position} 실책으로 출루`);
+          newPlayEvents.unshift(`${position} 실책`);
 
-        const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
-        newBases = [null, null, null];
-        runnersOn.forEach(({ runnerObj, base }) => {
-          const nextBase = base + 1;
-          if (nextBase > 3) processRunnerScoring(runnerObj);
-          else newBases[nextBase - 1] = runnerObj;
-        });
-        newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: false };
-      
-      } else if (isFielderChoice) {
-        const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
-        newBases = [null, null, null];
-        
-        if (runnersOn.length > 0) {
-          runnersOn.pop(); 
-          newOuts += 1;
-          pitchingDelta.inningsOuts += 1;
-        } else {
-          newOuts += 1;
-          pitchingDelta.inningsOuts += 1;
-        }
-
-        runnersOn.forEach(({ runnerObj, base }) => {
-          const nextBase = base + 1;
-          if (nextBase > 3) processRunnerScoring(runnerObj);
-          else newBases[nextBase - 1] = runnerObj;
-        });
-
-        newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
-        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 야수선택 출루 (선행주자 아웃)`);
-        newPlayEvents.unshift(`${currentBatter?.name || '타자'} 야수선택`);
-
-      } else if (isDoublePlay) {
-        const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
-        newBases = [null, null, null];
-
-        if (runnersOn.length > 0) {
-          runnersOn.shift();
-          newOuts += 2;
-          pitchingDelta.inningsOuts += 2;
-        } else {
-          newOuts += 1;
-          pitchingDelta.inningsOuts += 1;
-        }
-
-        runnersOn.forEach(({ runnerObj, base }) => {
-          const nextBase = base + 1;
-          if (nextBase > 3) processRunnerScoring(runnerObj);
-          else newBases[nextBase - 1] = runnerObj;
-        });
-
-        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 병살타 (2아웃)`);
-        newPlayEvents.unshift(`${currentBatter?.name || '타자'} 병살타`);
-
-      } else if (isOut) {
-        newOuts += 1;
-        pitchingDelta.inningsOuts += 1;
-        if (actionLabel === '삼진') pitchingDelta.strikeouts += 1;
-        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - ${actionLabel}`);
-        newPlayEvents.unshift(`${currentBatter?.name || '타자'} ${actionLabel}`);
-      } else {
-        const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
-        newBases = [null, null, null];
-
-        if (actionLabel === '볼넷' || actionLabel === '사구') {
-          const occupied = [state.bases[0], state.bases[1], state.bases[2]];
-          const third = occupied[2];
-          const second = occupied[1];
-          const first = occupied[0];
-          if (first && second && third) processRunnerScoring(third);
-          newBases[2] = second && first ? second : third;
-          newBases[1] = first ? first : second;
-          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
-          pitchingDelta.walksAllowed += 1;
-        } else {
+          const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
+          newBases = [null, null, null];
           runnersOn.forEach(({ runnerObj, base }) => {
-            const nextBase = base + basesToAdvance;
+            const nextBase = base + 1;
+            if (nextBase > 3) processRunnerScoring(runnerObj);
+            else newBases[nextBase - 1] = runnerObj;
+          });
+          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: false };
+        
+        } else if (isFielderChoice) {
+          const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
+          newBases = [null, null, null];
+          
+          if (runnersOn.length > 0) {
+            runnersOn.pop(); 
+            newOuts += 1;
+            pitchingDelta.inningsOuts += 1;
+          } else {
+            newOuts += 1;
+            pitchingDelta.inningsOuts += 1;
+          }
+
+          runnersOn.forEach(({ runnerObj, base }) => {
+            const nextBase = base + 1;
             if (nextBase > 3) processRunnerScoring(runnerObj);
             else newBases[nextBase - 1] = runnerObj;
           });
 
-          if (basesToAdvance > 3) {
-            runsScored++;
-            runsToPitchers.push({ pitcherId: currentPitcher.id, earned: true });
-            plateUpdates.runs = 1;
+          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 야수선택 출루 (선행주자 아웃)`);
+          newPlayEvents.unshift(`${currentBatter?.name || '타자'} 야수선택`);
+
+        } else if (isDoublePlay) {
+          const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
+          newBases = [null, null, null];
+
+          if (runnersOn.length > 0) {
+            runnersOn.shift();
+            newOuts += 2;
+            pitchingDelta.inningsOuts += 2;
           } else {
-            newBases[basesToAdvance - 1] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+            newOuts += 1;
+            pitchingDelta.inningsOuts += 1;
           }
-          if (countAsHit) pitchingDelta.hitsAllowed += 1;
+
+          runnersOn.forEach(({ runnerObj, base }) => {
+            const nextBase = base + 1;
+            if (nextBase > 3) processRunnerScoring(runnerObj);
+            else newBases[nextBase - 1] = runnerObj;
+          });
+
+          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 병살타 (2아웃)`);
+          newPlayEvents.unshift(`${currentBatter?.name || '타자'} 병살타`);
+
+        } else if (isOut) {
+          newOuts += 1;
+          pitchingDelta.inningsOuts += 1;
+          if (actionLabel === '삼진') pitchingDelta.strikeouts += 1;
+          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - ${actionLabel}`);
+          newPlayEvents.unshift(`${currentBatter?.name || '타자'} ${actionLabel}`);
+        } else {
+          const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
+          newBases = [null, null, null];
+
+          if (actionLabel === '볼넷' || actionLabel === '사구') {
+            const occupied = [state.bases[0], state.bases[1], state.bases[2]];
+            const third = occupied[2];
+            const second = occupied[1];
+            const first = occupied[0];
+            if (first && second && third) processRunnerScoring(third);
+            newBases[2] = second && first ? second : third;
+            newBases[1] = first ? first : second;
+            newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+            pitchingDelta.walksAllowed += 1;
+          } else {
+            runnersOn.forEach(({ runnerObj, base }) => {
+              const nextBase = base + basesToAdvance;
+              if (nextBase > 3) processRunnerScoring(runnerObj);
+              else newBases[nextBase - 1] = runnerObj;
+            });
+
+            if (basesToAdvance > 3) {
+              runsScored++;
+              runsToPitchers.push({ pitcherId: currentPitcher.id, earned: true });
+              plateUpdates.runs = 1;
+            } else {
+              newBases[basesToAdvance - 1] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+            }
+            if (countAsHit) pitchingDelta.hitsAllowed += 1;
+          }
+
+          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - ${actionLabel}${runsScored > 0 ? ' (+' + runsScored + '득점)' : ''}`);
+          newPlayEvents.unshift(`${currentBatter?.name || '타자'} ${actionLabel}`);
         }
 
-        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - ${actionLabel}${runsScored > 0 ? ` (+${runsScored}득점)` : ''}`);
-        newPlayEvents.unshift(`${currentBatter?.name || '타자'} ${actionLabel}`);
-      }
+        newScore += runsScored;
+        plateUpdates.rbi = runsScored;
 
-      newScore += runsScored;
-      plateUpdates.rbi = runsScored;
+        runsToPitchers.forEach(run => {
+          state = addPitcherRuns(state, defenseTeam, run.pitcherId, 1, run.earned ? 1 : 0);
+        });
 
-      runsToPitchers.forEach(run => {
-        state = addPitcherRuns(state, defenseTeam, run.pitcherId, 1, run.earned ? 1 : 0);
+        state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
+        state = applyPitchingEvent(state, defenseTeam, pitchingDelta);
+
+        let nextSummary = {
+          ...state.summary,
+          [battingTeam]: {
+            ...state.summary[battingTeam],
+            hits: (state.summary[battingTeam]?.hits || 0) + (countAsHit ? 1 : 0),
+            homeRuns: (state.summary[battingTeam]?.homeRuns || 0) + (actionLabel === '홈런' ? 1 : 0),
+            strikeouts: (state.summary[battingTeam]?.strikeouts || 0) + (actionLabel === '삼진' ? 1 : 0),
+            walks: (state.summary[battingTeam]?.walks || 0) + (['볼넷', '사구'].includes(actionLabel) ? 1 : 0)
+          }
+        };
+
+        let newBatterIndex = state[battingTeam].batterIndex;
+        if (state[battingTeam].lineup.length > 0) newBatterIndex = (newBatterIndex + 1) % state[battingTeam].lineup.length;
+
+        state = {
+          ...state,
+          outs: newOuts,
+          logs: newLogs,
+          playEvents: newPlayEvents,
+          bases: newBases,
+          summary: nextSummary,
+          [battingTeam]: {
+            ...state[battingTeam],
+            score: newScore,
+            batterIndex: newBatterIndex
+          }
+        };
+
+        state = advanceInningScore(state, battingTeam, runsScored);
+
+        let newInning = state.inning;
+        let newHalf = state.half;
+        if (state.outs >= 3) {
+          newLogs.unshift(`[${newInning}회${isTop ? '초' : '말'} 종료] 쓰리아웃 공수교대`);
+          if (newHalf === 'top') newHalf = 'bottom';
+          else { newHalf = 'top'; newInning += 1; }
+          state = { ...state, inning: newInning, half: newHalf, outs: 0, bases: [null, null, null], logs: newLogs };
+        }
+
+        return state;
       });
-
-      state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
-      state = applyPitchingEvent(state, defenseTeam, pitchingDelta);
-
-      let nextSummary = {
-        ...state.summary,
-        [battingTeam]: {
-          ...state.summary[battingTeam],
-          hits: (state.summary[battingTeam]?.hits || 0) + (countAsHit ? 1 : 0),
-          homeRuns: (state.summary[battingTeam]?.homeRuns || 0) + (actionLabel === '홈런' ? 1 : 0),
-          strikeouts: (state.summary[battingTeam]?.strikeouts || 0) + (actionLabel === '삼진' ? 1 : 0),
-          walks: (state.summary[battingTeam]?.walks || 0) + (['볼넷', '사구'].includes(actionLabel) ? 1 : 0)
-        }
-      };
-
-      let newBatterIndex = state[battingTeam].batterIndex;
-      if (state[battingTeam].lineup.length > 0) newBatterIndex = (newBatterIndex + 1) % state[battingTeam].lineup.length;
-
-      state = {
-        ...state,
-        outs: newOuts,
-        logs: newLogs,
-        playEvents: newPlayEvents,
-        bases: newBases,
-        summary: nextSummary,
-        [battingTeam]: {
-          ...state[battingTeam],
-          score: newScore,
-          batterIndex: newBatterIndex
-        }
-      };
-
-      state = advanceInningScore(state, battingTeam, runsScored);
-
-      let newInning = state.inning;
-      let newHalf = state.half;
-      if (state.outs >= 3) {
-        newLogs.unshift(`[${newInning}회${isTop ? '초' : '말'} 종료] 쓰리아웃 공수교대`);
-        if (newHalf === 'top') newHalf = 'bottom';
-        else { newHalf = 'top'; newInning += 1; }
-        state = { ...state, inning: newInning, half: newHalf, outs: 0, bases: [null, null, null], logs: newLogs };
-      }
-
-      return state;
     });
+  };
+
+  const applyPitchingEvent = (state, defenseTeam, delta) => {
+    const currentPitcherId = state[defenseTeam]?.pitcher?.id;
+    const updateStats = (stats) => ({
+      ...stats,
+      inningsOuts: (stats.inningsOuts || 0) + (delta.inningsOuts || 0),
+      strikeouts: (stats.strikeouts || 0) + (delta.strikeouts || 0),
+      runsAllowed: (stats.runsAllowed || 0) + (delta.runsAllowed || 0),
+      earnedRuns: (stats.earnedRuns || 0) + (delta.earnedRuns || 0),
+      hitsAllowed: (stats.hitsAllowed || 0) + (delta.hitsAllowed || 0),
+      walksAllowed: (stats.walksAllowed || 0) + (delta.walksAllowed || 0),
+      battersFaced: (stats.battersFaced || 0) + (delta.battersFaced || 0),
+      errorRuns: (stats.errorRuns || 0) + (delta.errorRuns || 0)
+    });
+
+    return {
+      ...state,
+      [defenseTeam]: {
+        ...state[defenseTeam],
+        pitcherGameStats: updateStats(state[defenseTeam].pitcherGameStats),
+        pitcherAppearances: state[defenseTeam].pitcherAppearances.map(appearance =>
+          appearance.pitcherId === currentPitcherId
+            ? { ...appearance, stats: updateStats(appearance.stats) }
+            : appearance
+        )
+      }
+    };
   };
 
   const forceInningChange = () => {
     if (!window.confirm("강제로 이닝을 교대하시겠습니까?")) return;
-    setGameState(prev => {
-      const isTop = prev.half === 'top';
-      let newLogs = [...prev.logs];
-      newLogs.unshift(`[${prev.inning}회${isTop ? '초' : '말'} 종료] 강제 공수교대`);
-      let newInning = prev.inning;
-      let newHalf = prev.half;
-      if (newHalf === 'top') {
-        newHalf = 'bottom';
-      } else {
-        newHalf = 'top';
-        newInning += 1;
-      }
-      return {
-        ...prev,
-        outs: 0,
-        bases: [null, null, null],
-        inning: newInning,
-        half: newHalf,
-        logs: newLogs
-      };
+    executeWithHistory(() => {
+      setGameState(prev => {
+        const isTop = prev.half === 'top';
+        let newLogs = [...prev.logs];
+        newLogs.unshift(`[${prev.inning}회${isTop ? '초' : '말'} 종료] 강제 공수교대`);
+        let newInning = prev.inning;
+        let newHalf = prev.half;
+        if (newHalf === 'top') {
+          newHalf = 'bottom';
+        } else {
+          newHalf = 'top';
+          newInning += 1;
+        }
+        return {
+          ...prev,
+          outs: 0,
+          bases: [null, null, null],
+          inning: newInning,
+          half: newHalf,
+          logs: newLogs
+        };
+      });
     });
   };
 
-  const finalizeAndPersistGameStats = (finishedState) => {
-    if (!finishedState) return;
+  const updateBatterSeasonStats = (player, gameStats) => ({
+    ...player,
+    games: (player.games || 0) + (gameStats.pa > 0 ? 1 : 0),
+    atBats: (player.atBats || 0) + gameStats.atBats,
+    runs: (player.runs || 0) + gameStats.runs,
+    hits: (player.hits || 0) + gameStats.hits,
+    homeRuns: (player.homeRuns || 0) + gameStats.homeRuns,
+    rbi: (player.rbi || 0) + gameStats.rbi,
+    walks: (player.walks || 0) + gameStats.walks,
+    steals: (player.steals || 0) + gameStats.steals,
+    errors: (player.errors || 0) + gameStats.errors,
+    avg: calculateBattingAverage((player.hits || 0) + gameStats.hits, (player.atBats || 0) + gameStats.atBats)
+  });
+
+  const updatePitcherSeasonStats = (pitcher, gameStats, isWinningPitcher, isLosingPitcher) => {
+    const nextOuts = parseBaseballInningsToOuts(pitcher.innings || 0) + (gameStats.inningsOuts || 0);
+    const nextInnings = outsToBaseballInnings(nextOuts);
+    const nextEarnedRuns = (pitcher.earnedRuns || 0) + gameStats.earnedRuns;
+    return {
+      ...pitcher,
+      games: (pitcher.games || 0) + 1,
+      wins: (pitcher.wins || 0) + (isWinningPitcher ? 1 : 0),
+      losses: (pitcher.losses || 0) + (isLosingPitcher ? 1 : 0),
+      innings: nextInnings,
+      strikeouts: (pitcher.strikeouts || 0) + gameStats.strikeouts,
+      runsAllowed: (pitcher.runsAllowed || 0) + gameStats.runsAllowed,
+      earnedRuns: nextEarnedRuns,
+      hitsAllowed: (pitcher.hitsAllowed || 0) + gameStats.hitsAllowed,
+      walksAllowed: (pitcher.walksAllowed || 0) + gameStats.walksAllowed,
+      battersFaced: (pitcher.battersFaced || 0) + gameStats.battersFaced,
+      era: calculateEra(nextEarnedRuns, nextOuts)
+    };
+  };
+
+  const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
+    if (!finishedState || !user) return;
 
     const polarisTeamKey = finishedState.mode === 'regular_play'
       ? (finishedState.venue === 'home' ? 'teamB' : 'teamA')
@@ -1095,13 +1535,17 @@ export default function App() {
       return teamKey === polarisTeamKey;
     };
 
-    const updatedPlayers = players.map(player => {
+    for (const player of players) {
       let updated = { ...player, batting: { ...player.batting }, pitching: { ...player.pitching } };
+      let changed = false;
       
       ['teamA', 'teamB'].forEach(teamKey => {
         if (!teamKeyToSeasonUpdater(teamKey)) return;
         const foundB = finishedState[teamKey].lineup.find(p => p.id === player.id);
-        if (foundB?.gameStats) updated.batting = updateBatterSeasonStats(updated.batting, foundB.gameStats);
+        if (foundB?.gameStats) {
+          updated.batting = updateBatterSeasonStats(updated.batting, foundB.gameStats);
+          changed = true;
+        }
 
         const appearances = finishedState[teamKey]?.pitcherAppearances || [];
         appearances.forEach((app, idx) => {
@@ -1112,13 +1556,15 @@ export default function App() {
               winningTeamKey === teamKey && idx === 0,
               losingTeamKey === teamKey && idx === 0
             );
+            changed = true;
           }
         });
       });
-      return updated;
-    });
-
-    setPlayers(updatedPlayers);
+      
+      if (changed) {
+         await setDoc(doc(db, 'polaris_players', player.id.toString()), updated);
+      }
+    }
 
     const isRegular = finishedState.mode === 'regular_play';
     const opponentName = isRegular ? (finishedState.opponentName?.trim() || '상대팀') : '자체 청백전';
@@ -1155,6 +1601,7 @@ export default function App() {
       venue: finishedState.venue,
       playEvents: finishedState.playEvents,
       lineup: finishedState[viewTeamKey].lineup.map((player, index) => ({
+        id: player.id,
         order: index + 1,
         position: player.assignedPosition || player.position,
         name: player.name,
@@ -1181,7 +1628,8 @@ export default function App() {
         { label: '삼진', left: opponentSummary?.strikeouts || 0, right: polarisSummary?.strikeouts || 0 },
         { label: '실책', left: opponentSummary?.errors || 0, right: polarisSummary?.errors || 0 },
         { label: '사사구', left: opponentSummary?.walks || 0, right: polarisSummary?.walks || 0 }
-      ]
+      ],
+      mvpId: mvpId || null
     };
 
     const newGameId = Date.now().toString();
@@ -1193,130 +1641,36 @@ export default function App() {
       detail: detailPayload
     };
     
-    setGameResults(prev => ([newGame, ...prev]));
+    await setDoc(doc(db, 'polaris_games', newGameId), newGame);
     setActiveTab('records');
   };
 
-  const endGame = () => {
-    if (window.confirm("현재 진행 중인 경기를 종료하고 기록을 저장하시겠습니까?")) {
-      finalizeAndPersistGameStats(gameState);
-      setGameState(null);
-      setRunnerActionBase(null);
-      setManualBaseAssign(null);
-    }
-  };
-
-  const getCurrentBattingTeamKey = () => (gameState?.half === 'top' ? 'teamA' : 'teamB');
-
-  const getCurrentOffensePlayers = () => {
-    if (!gameState) return [];
-    const battingTeamKey = getCurrentBattingTeamKey();
-    return gameState[battingTeamKey]?.lineup || [];
-  };
-
-  const handleManualBaseAssign = (baseIndex) => {
-    if (!gameState) return;
-    const allBasesEmpty = gameState.bases.every(base => base === null);
-    const isFirstBase = baseIndex === 0;
-    const isStartLikeState = allBasesEmpty && gameState.outs === 0;
-
-    if (gameState.bases[baseIndex]) {
-      setManualBaseAssign(null);
-      setRunnerActionBase(baseIndex);
-      return;
-    }
-
-    if (isFirstBase && isStartLikeState) {
-      setRunnerActionBase(null);
-      setManualBaseAssign(0);
-    }
-  };
-
-  const assignRunnerToBase = (playerName) => {
-    setGameState(prev => {
-      if (!prev) return prev;
-      const newBases = [...prev.bases];
-      const defenseTeam = prev.half === 'top' ? 'teamB' : 'teamA';
-      newBases[0] = { name: playerName, respPitcher: prev[defenseTeam].pitcher.id, isEarned: false };
-      const isTop = prev.half === 'top';
-      return {
-        ...prev,
-        bases: newBases,
-        logs: [`[${prev.inning}회${isTop ? '초' : '말'}] 수동 주자 배치 - ${playerName} 1루 배치`, ...prev.logs]
-      };
-    });
+  const confirmEndGame = () => {
+    finalizeAndPersistGameStats(gameState, endGameMvp);
+    setGameState(null);
+    setRunnerActionBase(null);
     setManualBaseAssign(null);
+    setShowEndGameModal(false);
+    setEndGameMvp('');
   };
-
-  const openMediaDb = () => new Promise((resolve, reject) => {
-    if (typeof window === 'undefined' || !window.indexedDB) {
-      resolve(null);
-      return;
-    }
-    const request = window.indexedDB.open(MEDIA_DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(MEDIA_STORE_NAME)) {
-        db.createObjectStore(MEDIA_STORE_NAME, { keyPath: 'key' });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-
-  const putMediaItem = async (item) => {
-    const db = await openMediaDb();
-    if (!db) return;
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(MEDIA_STORE_NAME, 'readwrite');
-      tx.objectStore(MEDIA_STORE_NAME).put(item);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
-    db.close();
-  };
-
-  const getAllMediaItems = async () => {
-    const db = await openMediaDb();
-    if (!db) return [];
-    const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction(MEDIA_STORE_NAME, 'readonly');
-      const request = tx.objectStore(MEDIA_STORE_NAME).getAll();
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    return result;
-  };
-
-  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
 
   const handleGalleryUpload = async (e) => {
     const files = Array.from(e.target.files || []);
-    if (!files.length) return;
+    if (!files.length || !user) return;
     try {
-      const newPosts = await Promise.all(files.map(async (file, index) => {
-        const imageUrl = await fileToDataUrl(file);
-        return {
-          id: generateId() + index,
-          imageUrl,
-          fileName: file.name,
+      for (let i=0; i<files.length; i++) {
+        const file = files[i];
+        const imageUrl = await resizeImage(file, 1024, 1024);
+        const newId = generateId();
+        await setDoc(doc(db, 'polaris_gallery', newId), {
+          id: newId,
+          imageUrl: String(imageUrl),
+          fileName: String(file.name),
           createdAt: new Date().toLocaleString('ko-KR'),
           caption: '팀 단체 사진'
-        };
-      }));
-      setGalleryPosts(prev => [...newPosts, ...prev]);
-      await Promise.all(newPosts.map(post => putMediaItem({
-        key: `gallery:${post.id}`,
-        type: 'gallery',
-        ...post
-      })));
+        });
+      }
+      alert('갤러리에 사진이 저장되었습니다.');
     } catch (error) {
       console.error('갤러리 사진 저장 실패', error);
       alert('사진 저장 중 오류가 발생했습니다.');
@@ -1327,67 +1681,22 @@ export default function App() {
   const getPlayerKey = (player) => `${player.primaryRole}-${player.id}`;
 
   const handlePlayerPhotoUpload = async (player, file) => {
-    if (!file || !player) return;
+    if (!file || !player || !user) return;
     try {
       const key = getPlayerKey(player);
-      const imageUrl = await fileToDataUrl(file);
-      setPlayerPhotos(prev => ({
-        ...prev,
-        [key]: imageUrl
-      }));
-      await putMediaItem({
-        key: `player:${key}`,
-        type: 'player',
+      const imageUrl = await resizeImage(file, 300, 300);
+      
+      await setDoc(doc(db, 'polaris_playerPhotos', key), {
         playerKey: key,
-        imageUrl,
+        imageUrl: String(imageUrl),
         updatedAt: Date.now()
       });
+      alert('프로필 사진이 저장되었습니다.');
     } catch (error) {
       console.error('프로필 사진 저장 실패', error);
       alert('프로필 사진 저장 중 오류가 발생했습니다.');
     }
   };
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const items = await getAllMediaItems();
-        if (!mounted) return;
-        const loadedGalleryPosts = items
-          .filter(item => item.type === 'gallery')
-          .sort((a, b) => b.id - a.id)
-          .map(({ id, imageUrl, fileName, createdAt, caption }) => ({ id, imageUrl, fileName, createdAt, caption }));
-        const loadedPlayerPhotos = items
-          .filter(item => item.type === 'player')
-          .reduce((acc, item) => {
-            acc[item.playerKey] = item.imageUrl;
-            return acc;
-          }, {});
-
-        // 배경 사진 및 설정 로드
-        const loadedBackground = items.find(item => item.key === 'background:current');
-        if (loadedBackground) {
-          if (loadedBackground.imageUrl && loadedBackground.imageUrl !== '/background.JPG') {
-            setCustomBackground(loadedBackground.imageUrl);
-          }
-          if (loadedBackground.settings) {
-            setBgSettings({
-              scale: loadedBackground.settings.scale ?? 1,
-              posX: loadedBackground.settings.posX ?? 50,
-              posY: loadedBackground.settings.posY ?? 50
-            });
-          }
-        }
-
-        setGalleryPosts(loadedGalleryPosts);
-        setPlayerPhotos(loadedPlayerPhotos);
-      } catch (error) {
-        console.error('저장된 사진 불러오기 실패', error);
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
 
   const getBatterStats = (p, type) => {
     const stats = type === 'career' ? (p.batting?.career || {}) : (p.batting || {});
@@ -1402,8 +1711,8 @@ export default function App() {
     const ops = obp + slg;
     
     return {
-      ...stats, id: p.id, name: p.name, uniformNumber: p.uniformNumber,
-      obp: obp.toFixed(3), slg: slg.toFixed(3), ops: ops.toFixed(3), avg: calculateBattingAverage(h, ab)
+      ...stats, id: p.id, name: String(p.name || ''), uniformNumber: p.uniformNumber,
+      obp: String(obp.toFixed(3)), slg: String(slg.toFixed(3)), ops: String(ops.toFixed(3)), avg: String(calculateBattingAverage(h, ab))
     };
   };
 
@@ -1413,8 +1722,8 @@ export default function App() {
     const ip = outs / 3;
     const whip = ip > 0 ? ((stats.hitsAllowed || 0) + (stats.walksAllowed || 0)) / ip : 0;
     return {
-      ...stats, id: p.id, name: p.name, uniformNumber: p.uniformNumber,
-      whip: whip.toFixed(2), era: calculateEra(stats.earnedRuns || 0, outs)
+      ...stats, id: p.id, name: String(p.name || ''), uniformNumber: p.uniformNumber,
+      whip: String(whip.toFixed(2)), era: String(calculateEra(stats.earnedRuns || 0, outs))
     };
   };
 
@@ -1500,12 +1809,116 @@ export default function App() {
   );
 
   const renderSchedule = () => (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-        <Calendar size={80} className="text-gray-300 mb-6" />
-        <h3 className="text-3xl font-black text-gray-800 mb-4">훈련 및 경기 일정</h3>
-        <p className="text-gray-500 text-xl font-medium">캘린더 및 일정 관리 기능이 곧 업데이트될 예정입니다.</p>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-3xl font-black text-gray-800 flex items-center gap-3"><Calendar size={32} /> 일정 관리 및 투표</h2>
+        {isAdminAuth && (
+          <button onClick={() => setShowScheduleModal(true)} className="bg-slate-800 hover:bg-black text-white px-5 py-2.5 rounded-lg font-bold flex items-center space-x-2 transition-colors shadow-md text-sm">
+            <Plus size={18} /><span>새 일정 추가</span>
+          </button>
+        )}
       </div>
+
+      {schedules.length === 0 ? (
+        <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+          <Calendar size={60} className="text-gray-300 mb-6" />
+          <h3 className="text-2xl font-bold text-gray-800 mb-2">등록된 일정이 없습니다.</h3>
+          <p className="text-gray-500 font-medium">관리자 모드에서 새로운 훈련이나 경기를 추가해보세요.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {schedules.map((schedule, idx) => {
+            const attendCount = Object.values(schedule.rsvps).filter(v => v === '참석').length;
+            const absentCount = Object.values(schedule.rsvps).filter(v => v === '불참').length;
+            const isPast = new Date(schedule.date) < new Date(new Date().toDateString());
+
+            return (
+              <div key={`schedule-${schedule.id || idx}`} className={`bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col ${isPast ? 'opacity-60' : ''}`}>
+                <div className={`p-4 border-b ${schedule.type === '경기' ? 'bg-blue-50 border-blue-100' : 'bg-gray-50 border-gray-200'}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <span className={`text-xs font-bold px-2 py-1 rounded-full ${schedule.type === '경기' ? 'bg-blue-600 text-white' : 'bg-slate-600 text-white'}`}>{schedule.type}</span>
+                    {isAdminAuth && (
+                      <button onClick={() => handleDeleteSchedule(schedule.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16} /></button>
+                    )}
+                  </div>
+                  <h3 className="font-black text-xl text-gray-800 line-clamp-1">{schedule.title}</h3>
+                  <p className="text-sm font-semibold text-gray-600 mt-1">{schedule.date} · {schedule.location}</p>
+                </div>
+                <div className="p-5 flex-1 flex flex-col justify-between">
+                  <div className="flex gap-4 mb-5 text-sm">
+                    <div className="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg flex-1 text-center font-bold">참석: {attendCount}명</div>
+                    <div className="bg-red-50 text-red-700 px-3 py-2 rounded-lg flex-1 text-center font-bold">불참: {absentCount}명</div>
+                  </div>
+                  <button 
+                    onClick={() => setShowRsvpModal(schedule.id)} 
+                    className="w-full bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors shadow-sm"
+                    disabled={isPast}
+                  >
+                    {isPast ? '종료된 일정' : '참석 여부 투표하기'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 일정 추가 모달 */}
+      {showScheduleModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50">
+              <h3 className="font-bold text-gray-800">새 일정 추가</h3>
+              <button onClick={() => setShowScheduleModal(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleAddSchedule} className="p-5 space-y-4">
+              <div><label className="block text-xs font-bold text-gray-600 mb-1">일정명</label><input required type="text" name="title" value={scheduleForm.title} onChange={handleScheduleInputChange} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-slate-800 outline-none text-sm" placeholder="예: 토요 정기 훈련" /></div>
+              <div><label className="block text-xs font-bold text-gray-600 mb-1">날짜</label><input required type="date" name="date" value={scheduleForm.date} onChange={handleScheduleInputChange} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-slate-800 outline-none text-sm" /></div>
+              <div><label className="block text-xs font-bold text-gray-600 mb-1">장소</label><input required type="text" name="location" value={scheduleForm.location} onChange={handleScheduleInputChange} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-slate-800 outline-none text-sm" placeholder="예: 순천향대학교 운동장" /></div>
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">종류</label>
+                <select name="type" value={scheduleForm.type} onChange={handleScheduleInputChange} className="w-full p-2.5 border rounded-lg outline-none bg-white text-sm">
+                  <option value="훈련">훈련</option>
+                  <option value="경기">경기</option>
+                </select>
+              </div>
+              <div className="pt-2"><button type="submit" className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl hover:bg-black transition-colors">일정 저장</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 투표 모달 */}
+      {showRsvpModal !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50">
+              <h3 className="font-bold text-gray-800">참석 여부 투표</h3>
+              <button onClick={() => setShowRsvpModal(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleRsvpSubmit} className="p-5 space-y-5">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">누구신가요?</label>
+                <select required value={rsvpPlayerId} onChange={(e) => setRsvpPlayerId(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-800 bg-white">
+                  <option value="">선수 선택...</option>
+                  {players.map((p, idx) => <option key={`rsvp-${p.id || idx}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}
+                </select>
+              </div>
+              <div className="flex gap-3">
+                <label className={`flex-1 border-2 rounded-xl p-3 text-center cursor-pointer font-bold transition-all ${rsvpStatus === '참석' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                  <input type="radio" name="status" value="참석" className="hidden" checked={rsvpStatus === '참석'} onChange={() => setRsvpStatus('참석')} />
+                  참석
+                </label>
+                <label className={`flex-1 border-2 rounded-xl p-3 text-center cursor-pointer font-bold transition-all ${rsvpStatus === '불참' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                  <input type="radio" name="status" value="불참" className="hidden" checked={rsvpStatus === '불참'} onChange={() => setRsvpStatus('불참')} />
+                  불참
+                </label>
+              </div>
+              <button type="submit" className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl hover:bg-black transition-colors mt-2">투표 완료</button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -1581,7 +1994,7 @@ export default function App() {
                           {g.home === '폴라리스' ? `${g.homeScore} : ${g.awayScore}` : `${g.awayScore} : ${g.homeScore}`}
                         </td>
                         <td className="p-4 text-center">
-                          <span className={`font-black px-3 py-1 rounded-full text-sm ${g.result === '승' ? 'bg-slate-800 text-white' : g.result === '패' ? 'bg-gray-400 text-white' : 'bg-gray-500 text-white'}`}>
+                          <span className={`font-black px-3 py-1 rounded-full text-sm flex items-center justify-center mx-auto w-12 ${g.result === '승' ? 'bg-slate-800 text-white' : g.result === '패' ? 'bg-gray-400 text-white' : 'bg-gray-500 text-white'}`}>
                             {g.result}
                           </span>
                         </td>
@@ -1717,6 +2130,147 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderGameResultDetail = () => {
+    if (!selectedGameResult || !selectedGameResult.detail) return null;
+    const detail = selectedGameResult.detail;
+
+    return (
+      <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4" onClick={() => { setSelectedGameResult(null); setDetailTab('summary'); }}>
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white z-10">
+            <div>
+              <p className="text-sm text-gray-500">{selectedGameResult.date}</p>
+              <h3 className="text-2xl font-black text-gray-800">{selectedGameResult.away} {selectedGameResult.awayScore} : {selectedGameResult.homeScore} {selectedGameResult.home}</h3>
+            </div>
+            
+            <div className="flex bg-gray-100 p-1 rounded-xl w-full sm:w-auto">
+              {['summary', 'lineup', 'playbyplay'].map(tab => {
+                const labels = { summary: '경기 요약', lineup: '라인업/기록', playbyplay: 'Play by Play' };
+                return (
+                  <button 
+                    key={`tab-${tab}`} 
+                    onClick={() => setDetailTab(tab)}
+                    className={`flex-1 sm:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-all ${detailTab === tab ? 'bg-white shadow-sm text-slate-800' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    {labels[tab]}
+                  </button>
+                )
+              })}
+            </div>
+
+            <button onClick={() => { setSelectedGameResult(null); setDetailTab('summary'); }} className="hidden sm:block text-gray-500 hover:text-gray-800"><X size={28} /></button>
+          </div>
+
+          <div className="p-6 overflow-y-auto flex-1 bg-gray-50/50">
+            {detailTab === 'summary' && (
+              <div className="space-y-6">
+                {detail.mvpId && (
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-6 border border-amber-100 shadow-sm flex items-center gap-4">
+                    <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
+                      <Trophy size={32} className="text-amber-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-amber-600 mb-1">MVP (Man of the Match)</p>
+                      <h4 className="text-2xl font-black text-gray-800">{String(players.find(p => String(p.id) === String(detail.mvpId))?.name || '알 수 없음')}</h4>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+                  <h4 className="text-lg font-black text-gray-800 mb-4">이닝별 득점</h4>
+                  <div className="overflow-x-auto"><InningBox detail={detail} /></div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                    <h4 className="text-lg font-black text-gray-800 mb-4">팀 스탯 비교</h4>
+                    <div className="space-y-3">
+                      {detail.statBars?.map(bar => (
+                        <div key={`statbar-${bar.label}`} className="grid grid-cols-[30px_1fr_30px] items-center gap-3 text-sm">
+                          <div className="text-right font-black text-gray-600">{bar.left}</div>
+                          <div className="relative h-6 bg-gray-100 rounded-full overflow-hidden flex items-center justify-center font-bold text-white text-xs">
+                            <div className="absolute inset-y-0 left-0 bg-gray-400" style={{ width: `${Math.max(5, (bar.left / Math.max(bar.left + bar.right, 1)) * 100)}%` }} />
+                            <div className="absolute inset-y-0 right-0 bg-slate-700" style={{ width: `${Math.max(5, (bar.right / Math.max(bar.left + bar.right, 1)) * 100)}%` }} />
+                            <span className="relative z-10 text-gray-800">{bar.label}</span>
+                          </div>
+                          <div className="font-black text-slate-700">{bar.right}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                    <h4 className="text-lg font-black text-gray-800 mb-4">우리 팀 투수 기록</h4>
+                    <div className="space-y-3">
+                      {(detail.pitchers?.length ? detail.pitchers : [detail.pitcher]).filter(Boolean).map((pitcherRow, idx) => (
+                        <div key={`game-pitcher-${idx}`} className="bg-gray-50 rounded-xl p-3 text-sm flex flex-wrap gap-x-4 gap-y-2">
+                          <div className="font-bold text-gray-800 w-full mb-1">{pitcherRow.name}</div>
+                          <div><span className="text-gray-500 text-xs">이닝</span> <span className="font-bold">{outsToBaseballInnings(pitcherRow.inningsOuts || 0)}</span></div>
+                          <div><span className="text-gray-500 text-xs">실점</span> <span className="font-bold">{pitcherRow.runsAllowed || 0}</span></div>
+                          <div><span className="text-gray-500 text-xs">자책</span> <span className="font-bold">{pitcherRow.earnedRuns || 0}</span></div>
+                          <div><span className="text-gray-500 text-xs">피안타</span> <span className="font-bold">{pitcherRow.hitsAllowed || 0}</span></div>
+                          <div><span className="text-gray-500 text-xs">볼넷</span> <span className="font-bold">{pitcherRow.walksAllowed || 0}</span></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {detailTab === 'lineup' && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
+                <table className="w-full text-sm min-w-[980px]">
+                  <thead className="bg-gray-50 text-gray-600 border-b border-gray-100">
+                    <tr>
+                      <th className="p-3 text-left">순번</th>
+                      <th className="p-3 text-left">선수</th>
+                      {[1,2,3,4,5,6,7,8,9].map(i => <th key={`inning-th-${i}`} className="p-3 text-center">{i}</th>)}
+                      <th className="p-3 text-center">타수</th>
+                      <th className="p-3 text-center">안타</th>
+                      <th className="p-3 text-center">타점</th>
+                      <th className="p-3 text-center">득점</th>
+                      <th className="p-3 text-center">타율</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {detail.lineup?.map((row, idx) => (
+                      <tr key={`game-lineup-${row.id || idx}`} className="hover:bg-gray-50">
+                        <td className="p-3 text-center font-bold text-gray-400">{row.order}</td>
+                        <td className="p-3 font-bold text-gray-800">{row.name} <span className="text-gray-400 text-xs font-medium ml-1">{row.position}</span></td>
+                        {[1,2,3,4,5,6,7,8,9].map(i => (
+                          <td key={`inning-td-${i}`} className="p-3 text-center text-xs text-gray-500">{(row.resultByInning?.[`${i}`] || []).join(', ')}</td>
+                        ))}
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.atBats || 0}</td>
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.hits || 0}</td>
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.rbi || 0}</td>
+                        <td className="p-3 text-center font-bold bg-gray-50/50">{row.runs || 0}</td>
+                        <td className="p-3 text-center font-black text-slate-800 bg-slate-100/50">{calculateBattingAverage(row.hits, row.atBats)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {detailTab === 'playbyplay' && (
+              <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                <div className="space-y-3">
+                  {detail.playEvents?.map((event, index) => (
+                    <div key={`event-${index}`} className="flex gap-4 items-center">
+                      <div className="text-gray-300 font-black text-xs w-6 text-right">{detail.playEvents.length - index}</div>
+                      <div className="bg-gray-50 rounded-lg px-4 py-3 text-sm text-gray-700 flex-1 border border-gray-100">{event}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   };
@@ -1871,11 +2425,11 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
               <div className="p-3 bg-blue-100 text-blue-600 rounded-lg"><Users size={24} /></div>
-              <div><p className="text-sm text-gray-500 font-medium">등록된 타자</p><h3 className="text-2xl font-bold text-gray-800">{players.filter(p => p.primaryRole === '타자').length}명</h3></div>
+              <div><p className="text-sm text-gray-500 font-medium">등록된 타자</p><h3 className="text-2xl font-bold text-gray-800">{players.filter(p => ['타자','투타겸업'].includes(p.primaryRole)).length}명</h3></div>
             </div>
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
               <div className="p-3 bg-green-100 text-green-600 rounded-lg"><Activity size={24} /></div>
-              <div><p className="text-sm text-gray-500 font-medium">등록된 투수</p><h3 className="text-2xl font-bold text-gray-800">{players.filter(p => p.primaryRole === '투수').length}명</h3></div>
+              <div><p className="text-sm text-gray-500 font-medium">등록된 투수</p><h3 className="text-2xl font-bold text-gray-800">{players.filter(p => ['투수','투타겸업'].includes(p.primaryRole)).length}명</h3></div>
             </div>
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
               <div className="p-3 bg-amber-100 text-amber-600 rounded-lg"><Trophy size={24} /></div>
@@ -2130,6 +2684,11 @@ export default function App() {
                 <div className="flex justify-between items-center mb-8 border-b pb-4">
                   <h3 className="text-2xl font-black text-gray-800">{gameState.mode === 'regular_setup' ? '정규 경기 라인업 설정' : '청백전 라인업 설정'}</h3>
                   <div className="flex gap-3">
+                    {gameState.mode === 'regular_setup' && (
+                      <button onClick={downloadLineupCard} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-xl font-bold transition-colors shadow-sm flex items-center gap-2">
+                        <Download size={18} /> 라인업 다운로드
+                      </button>
+                    )}
                     <button onClick={() => setGameState(null)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-3 rounded-xl font-bold transition-colors flex items-center gap-2">
                       <ArrowLeft size={18} /> 이전
                     </button>
@@ -2176,8 +2735,7 @@ export default function App() {
                               <td className="p-3">
                                 <select className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white" value={gameState[teamKey].pitcherId} onChange={(e) => handlePitcherChange(teamKey, e.target.value)}>
                                   <option value="">투수 선택...</option>
-                                  <optgroup label="투수">{players.filter(p => p.primaryRole === '투수').map(p => <option key={`pitcher-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}</optgroup>
-                                  <optgroup label="타자">{players.filter(p => p.primaryRole === '타자').map(p => <option key={`batter-p-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}</optgroup>
+                                  <optgroup label="투수">{players.filter(p => ['투수','투타겸업'].includes(p.primaryRole)).map(p => <option key={`pitcher-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}</optgroup>
                                 </select>
                               </td>
                               <td className="p-3"><input type="text" value="투수" disabled className="w-full p-2 border rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed" /></td>
@@ -2189,8 +2747,7 @@ export default function App() {
                                 <td className="p-3">
                                   <select className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white" value={slot.playerId} onChange={(e) => handleLineupChange(teamKey, idx, 'playerId', e.target.value)}>
                                     <option value="">타자 선택...</option>
-                                    <optgroup label="타자">{players.filter(p => p.primaryRole === '타자').map(b => <option key={`batter-opt-${b.id}`} value={b.id}>{b.name} (No.{b.uniformNumber})</option>)}</optgroup>
-                                    <optgroup label="투수">{players.filter(p => p.primaryRole === '투수').map(p => <option key={`pitcher-b-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}</optgroup>
+                                    <optgroup label="타자">{players.filter(p => ['타자','투타겸업'].includes(p.primaryRole)).map(b => <option key={`batter-opt-${b.id}`} value={b.id}>{b.name} (No.{b.uniformNumber})</option>)}</optgroup>
                                   </select>
                                 </td>
                                 <td className="p-3">
@@ -2233,7 +2790,12 @@ export default function App() {
                           <div className={`w-3 h-3 rounded-full ${gameState.outs >= 2 ? 'bg-red-500' : 'bg-slate-700'}`}></div>
                         </div>
                       </div>
-                      <button onClick={forceInningChange} className="mt-2 flex items-center gap-1 mx-auto bg-slate-800 hover:bg-slate-700 border border-slate-600 text-gray-300 text-xs px-2 py-1 rounded transition-colors"><FastForward size={12} /> 강제 교대</button>
+                      <div className="flex justify-center mt-3 gap-2">
+                        <button onClick={() => executeWithHistory(() => forceInningChange())} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-gray-300 text-xs px-2 py-1 rounded transition-colors"><FastForward size={12} /> 강제 교대</button>
+                        <button onClick={handleUndo} disabled={gameStateHistory.length === 0} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${gameStateHistory.length > 0 ? 'bg-amber-600/30 hover:bg-amber-600/60 border border-amber-600/50 text-amber-200' : 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'}`} title="직전 플레이 취소">
+                          <Undo size={12} /> 실행 취소
+                        </button>
+                      </div>
                     </div>
                     <div className="text-center w-1/3">
                       <p className="text-gray-400 font-bold mb-1">{gameState.teamB.name}</p>
@@ -2266,8 +2828,7 @@ export default function App() {
                       {changingPitcherTeam === (gameState.half === 'top' ? 'teamB' : 'teamA') ? (
                         <select autoFocus className="w-full mt-1 p-1 bg-slate-700 border border-slate-600 text-white rounded outline-none text-sm" onChange={(e) => executePitcherChange(gameState.half === 'top' ? 'teamB' : 'teamA', e.target.value)} onBlur={() => setChangingPitcherTeam(null)}>
                           <option value="">투수 선택...</option>
-                          {players.filter(p => p.primaryRole === '투수').map(p => <option key={`pitcher-chg-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}
-                          {players.filter(p => p.primaryRole === '타자').map(p => <option key={`batter-chg-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}
+                          {players.filter(p => ['투수','투타겸업'].includes(p.primaryRole)).map(p => <option key={`pitcher-chg-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber})</option>)}
                         </select>
                       ) : (
                         <div className="flex items-center justify-end gap-2 mt-1">
@@ -2317,7 +2878,7 @@ export default function App() {
                   <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm h-64 overflow-hidden flex flex-col">
                     <div className="flex justify-between items-center mb-4">
                       <h4 className="text-xl font-black text-gray-800">Play by Play</h4>
-                      <button onClick={endGame} className="text-sm font-bold text-slate-800 hover:text-white hover:bg-slate-800 border border-slate-800 px-4 py-1.5 rounded-lg transition-colors">경기 종료 및 기록 저장</button>
+                      <button onClick={() => setShowEndGameModal(true)} className="text-sm font-bold text-slate-800 hover:text-white hover:bg-slate-800 border border-slate-800 px-4 py-1.5 rounded-lg transition-colors">경기 종료 및 기록 저장</button>
                     </div>
                     <div className="overflow-y-auto flex-1 pr-2 space-y-2">
                       {gameState.logs.map((log, i) => (
@@ -2331,8 +2892,144 @@ export default function App() {
                 </div>
               </div>
             )}
+            
+            {/* 경기 종료 시 MVP 선택 모달 */}
+            {showEndGameModal && (
+               <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[90]">
+                 <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
+                   <div className="p-6 border-b border-gray-100 flex items-center justify-center bg-gray-50">
+                      <Award size={32} className="text-amber-500 mr-2" />
+                      <h3 className="text-xl font-black text-gray-800">MOM 선정</h3>
+                   </div>
+                   <div className="p-6">
+                      <p className="text-sm text-gray-500 mb-4 text-center">오늘 경기에서 가장 활약한 최우수 선수를 골라주세요!</p>
+                      <select 
+                        value={endGameMvp} 
+                        onChange={(e) => setEndGameMvp(e.target.value)} 
+                        className="w-full p-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-slate-800 bg-white"
+                      >
+                         <option value="">MVP 없음 (선택 안 함)</option>
+                         <optgroup label={gameState?.teamA.name}>
+                            {gameState?.teamA.lineup.map(p => p.playerId ? <option key={`mvp-A-${p.id}`} value={p.id}>{p.name}</option> : null)}
+                            {gameState?.teamA.pitcher && <option value={gameState.teamA.pitcher.id}>{gameState.teamA.pitcher.name}</option>}
+                         </optgroup>
+                         <optgroup label={gameState?.teamB.name}>
+                            {gameState?.teamB.lineup.map(p => p.playerId ? <option key={`mvp-B-${p.id}`} value={p.id}>{p.name}</option> : null)}
+                            {gameState?.teamB.pitcher && <option value={gameState.teamB.pitcher.id}>{gameState.teamB.pitcher.name}</option>}
+                         </optgroup>
+                      </select>
+                   </div>
+                   <div className="flex gap-2 p-6 pt-0">
+                      <button onClick={() => setShowEndGameModal(false)} className="flex-1 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">취소</button>
+                      <button onClick={confirmEndGame} className="flex-1 px-4 py-3 bg-slate-800 hover:bg-black text-white font-bold rounded-xl transition-colors">저장 완료</button>
+                   </div>
+                 </div>
+               </div>
+            )}
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderPlayerDetail = () => {
+    if (!selectedPlayer) return null;
+
+    const battingStats = getBatterStats(selectedPlayer, 'season');
+    const pitchingStats = getPitcherStats(selectedPlayer, 'season');
+
+    const chartData = selectedPlayer.primaryRole === '투수' ? [
+      { label: 'ERA', value: Math.max(0, 100 - (parseFloat(pitchingStats.era || 0) * 10)), max: 100 },
+      { label: 'K', value: selectedPlayer.pitching?.strikeouts || 0, max: 100 },
+      { label: 'W', value: (selectedPlayer.pitching?.wins || 0) * 10, max: 100 },
+      { label: 'IP', value: parseFloat(selectedPlayer.pitching?.innings || 0), max: 100 },
+      { label: 'WHIP', value: Math.max(0, 100 - (parseFloat(pitchingStats.whip || 0) * 30)), max: 100 }
+    ] : [
+      { label: 'Contact', value: parseFloat(battingStats.avg || 0) * 300, max: 100 },
+      { label: 'Power', value: parseFloat(battingStats.slg || 0) * 200, max: 100 },
+      { label: 'Eye', value: parseFloat(battingStats.obp || 0) * 250, max: 100 },
+      { label: 'Run', value: (selectedPlayer.batting?.steals || 0) * 5, max: 100 },
+      { label: 'RBI', value: selectedPlayer.batting?.rbi || 0, max: 100 }
+    ];
+
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[70]" onClick={() => setSelectedPlayer(null)}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col relative" onClick={e => e.stopPropagation()}>
+          <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-8 flex items-center gap-6 relative">
+            <button onClick={() => setSelectedPlayer(null)} className="absolute top-4 right-4 text-white/70 hover:text-white">
+              <X size={28} />
+            </button>
+            <div className="w-28 h-28 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/30 backdrop-blur overflow-hidden shrink-0">
+              {playerPhotos[getPlayerKey(selectedPlayer)] ? (
+                <img src={playerPhotos[getPlayerKey(selectedPlayer)]} alt={`${selectedPlayer.name} 프로필`} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-5xl font-black">{selectedPlayer.uniformNumber}</span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-gray-300 font-bold text-sm tracking-widest mb-1">POLARIS · {String(selectedPlayer.position)}</p>
+              <h2 className="text-4xl font-black mb-2 truncate">{String(selectedPlayer.name)}</h2>
+              <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${selectedPlayer.primaryRole === '투수' ? 'bg-gray-600' : 'bg-gray-500'}`}>
+                {String(selectedPlayer.primaryRole)}
+              </span>
+              {isAdminAuth && (
+                <div className="mt-4">
+                  <label className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors">
+                    <Camera size={16} /> 프로필 사진 변경
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePlayerPhotoUpload(selectedPlayer, e.target.files?.[0])} />
+                  </label>
+                </div>
+              )}
+            </div>
+            
+            <div className="hidden md:flex flex-col items-center justify-center bg-white/5 rounded-xl p-4 ml-auto w-48 shrink-0">
+              <RadarChart data={chartData} color="#38bdf8" />
+            </div>
+          </div>
+
+          <div className="overflow-y-auto p-8 space-y-8">
+            <div className="flex md:hidden flex-col items-center justify-center bg-gray-50 rounded-xl p-4 w-full">
+              <h4 className="text-sm font-bold text-gray-500 mb-2">시즌 능력치 분석</h4>
+              <RadarChart data={chartData} color="#38bdf8" />
+            </div>
+
+            {['타자', '투타겸업'].includes(selectedPlayer.primaryRole) && (
+              <div>
+                <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2"><span className="w-1 h-5 bg-slate-800 rounded"></span> 타격 기록 ({seasonLabel})</h3>
+                <div className="overflow-x-auto bg-gray-50/50 rounded-xl border border-gray-200">
+                  <table className="w-full text-sm">
+                    <thead className="text-gray-600 border-b border-gray-200">
+                      <tr><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">AB</th><th className="p-3 font-semibold">R</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">HR</th><th className="p-3 font-semibold">RBI</th><th className="p-3 font-semibold">BB</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold">SB</th><th className="p-3 font-semibold text-gray-800">AVG</th><th className="p-3 font-semibold text-gray-800">OPS</th></tr>
+                    </thead>
+                    <tbody className="text-gray-800 font-bold text-center">
+                      <tr>
+                        <td className="p-3">{selectedPlayer.batting?.games || 0}</td><td className="p-3">{selectedPlayer.batting?.atBats || 0}</td><td className="p-3">{selectedPlayer.batting?.runs || 0}</td><td className="p-3">{selectedPlayer.batting?.hits || 0}</td><td className="p-3">{selectedPlayer.batting?.homeRuns || 0}</td><td className="p-3">{selectedPlayer.batting?.rbi || 0}</td><td className="p-3">{selectedPlayer.batting?.walks || 0}</td><td className="p-3">{selectedPlayer.batting?.strikeouts || 0}</td><td className="p-3">{selectedPlayer.batting?.steals || 0}</td><td className="p-3 text-gray-900 text-lg">{String(battingStats.avg)}</td><td className="p-3 text-gray-900 text-lg">{String(battingStats.ops)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {['투수', '투타겸업'].includes(selectedPlayer.primaryRole) && (
+              <div>
+                <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2"><span className="w-1 h-5 bg-emerald-600 rounded"></span> 투구 기록 ({seasonLabel})</h3>
+                <div className="overflow-x-auto bg-gray-50/50 rounded-xl border border-gray-200">
+                  <table className="w-full text-sm">
+                    <thead className="text-gray-600 border-b border-gray-200">
+                      <tr><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">BB</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold">ER</th><th className="p-3 font-semibold text-gray-800">ERA</th><th className="p-3 font-semibold text-gray-800">WHIP</th></tr>
+                    </thead>
+                    <tbody className="text-gray-800 font-bold text-center">
+                      <tr>
+                        <td className="p-3">{selectedPlayer.pitching?.games || 0}</td><td className="p-3">{selectedPlayer.pitching?.wins || 0}</td><td className="p-3">{selectedPlayer.pitching?.losses || 0}</td><td className="p-3">{selectedPlayer.pitching?.saves || 0}</td><td className="p-3">{selectedPlayer.pitching?.innings || 0}</td><td className="p-3">{selectedPlayer.pitching?.hitsAllowed || 0}</td><td className="p-3">{selectedPlayer.pitching?.walksAllowed || 0}</td><td className="p-3">{selectedPlayer.pitching?.strikeouts || 0}</td><td className="p-3">{selectedPlayer.pitching?.earnedRuns || 0}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.era)}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.whip)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   };
@@ -2342,6 +3039,27 @@ export default function App() {
       <style>
         {`
           @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+          @keyframes slowZoom {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.05); }
+          }
+          @keyframes slideInLeft {
+            0% { transform: translateX(-100%); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+          }
+          @keyframes slideInRight {
+            0% { transform: translateX(100%); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+          }
+          .animate-bg { 
+            animation: slowZoom 15s ease-in-out infinite alternate; 
+          }
+          .animate-slide-left {
+            animation: slideInLeft 2.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+          .animate-slide-right {
+            animation: slideInRight 2.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
         `}
       </style>
       <nav className="fixed top-0 left-0 w-full h-14 bg-black/60 backdrop-blur-md text-white z-50 border-b border-white/10 shadow-sm" style={{ fontFamily: "'Malgun Gothic', '맑은 고딕', sans-serif" }}>
@@ -2352,7 +3070,7 @@ export default function App() {
           </button>
           
           <div className="hidden sm:flex space-x-6 md:space-x-10 text-sm md:text-base font-black tracking-widest">
-            <button onClick={() => setActiveTab('schedule')} className={`hover:text-gray-300 transition-colors ${activeTab === 'schedule' ? 'text-white' : ''}`}>훈련/경기 일정</button>
+            <button onClick={() => setActiveTab('schedule')} className={`hover:text-gray-300 transition-colors ${activeTab === 'schedule' ? 'text-white' : ''}`}>일정/참석</button>
             <button onClick={() => setActiveTab('records')} className={`hover:text-gray-300 transition-colors ${activeTab === 'records' ? 'text-white' : ''}`}>기록</button>
             <button onClick={() => setActiveTab('photos')} className={`hover:text-gray-300 transition-colors ${activeTab === 'photos' ? 'text-white' : ''}`}>사진</button>
             <button onClick={() => setActiveTab('lockerRoom')} className={`hover:text-gray-300 transition-colors ${activeTab === 'lockerRoom' ? 'text-white' : ''}`}>락커룸</button>
@@ -2372,15 +3090,7 @@ export default function App() {
       
       {activeTab !== 'landing' && (
         <main className="pt-24 pb-16">
-          {activeTab === 'schedule' && (
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-                <Calendar size={80} className="text-gray-300 mb-6" />
-                <h3 className="text-3xl font-black text-gray-800 mb-4">훈련 및 경기 일정</h3>
-                <p className="text-gray-500 text-xl font-medium">캘린더 및 일정 관리 기능이 곧 업데이트될 예정입니다.</p>
-              </div>
-            </div>
-          )}
+          {activeTab === 'schedule' && renderSchedule()}
           {activeTab === 'records' && renderRecordsAndRankings()}
           {activeTab === 'photos' && renderPhotos()}
           {activeTab === 'lockerRoom' && renderLockerRoom()}
@@ -2388,8 +3098,9 @@ export default function App() {
         </main>
       )}
 
-      {selectedGameResult && renderGameResultDetail()}
-      
+      {renderGameResultDetail()}
+      {renderPlayerDetail()}
+
       {/* 통산 기록 관리 모달 */}
       {showCareerModal && careerPlayer && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[90]">
@@ -2450,94 +3161,6 @@ export default function App() {
             <div className="flex justify-end space-x-3 p-6 border-t border-gray-100 flex-shrink-0 bg-gray-50">
               <button type="button" onClick={() => setShowCareerModal(false)} className="px-5 py-2.5 rounded-lg text-gray-700 font-medium hover:bg-gray-200 transition-colors">취소</button>
               <button type="submit" form="career-form" className="px-5 py-2.5 rounded-lg bg-slate-800 text-white font-medium hover:bg-black transition-colors shadow-sm">기록 저장</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedPlayer && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[70]" onClick={() => setSelectedPlayer(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col relative" onClick={e => e.stopPropagation()}>
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-8 flex items-center gap-6 relative">
-              <button onClick={() => setSelectedPlayer(null)} className="absolute top-4 right-4 text-white/70 hover:text-white">
-                <X size={28} />
-              </button>
-              <div className="w-28 h-28 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/30 backdrop-blur overflow-hidden">
-                {playerPhotos[getPlayerKey(selectedPlayer)] ? (
-                  <img src={playerPhotos[getPlayerKey(selectedPlayer)]} alt={`${selectedPlayer.name} 프로필`} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-5xl font-black">{selectedPlayer.uniformNumber}</span>
-                )}
-              </div>
-              <div className="flex-1">
-                <p className="text-gray-300 font-bold text-sm tracking-widest mb-1">POLARIS · {selectedPlayer.position}</p>
-                <h2 className="text-4xl font-black mb-2">{selectedPlayer.name}</h2>
-                <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${selectedPlayer.primaryRole === '투수' ? 'bg-gray-600' : 'bg-gray-500'}`}>
-                  {selectedPlayer.primaryRole}
-                </span>
-                {isAdminAuth && (
-                  <div className="mt-4">
-                    <label className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors">
-                      <Camera size={16} /> 프로필 사진 업로드
-                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePlayerPhotoUpload(selectedPlayer, e.target.files?.[0])} />
-                    </label>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="overflow-y-auto p-8 space-y-8">
-              <div>
-                <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2"><span className="w-1 h-5 bg-slate-800 rounded"></span> {seasonLabel} 기록</h3>
-                <div className="overflow-x-auto bg-gray-50/50 rounded-xl border border-gray-200">
-                  <table className="w-full text-sm">
-                    <thead className="text-gray-600 border-b border-gray-200">
-                      <tr>
-                        {selectedPlayer.primaryRole === '투수' ? (
-                          <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold text-gray-800">ERA</th></>
-                        ) : (
-                          <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">AB</th><th className="p-3 font-semibold">R</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">HR</th><th className="p-3 font-semibold">RBI</th><th className="p-3 font-semibold text-gray-800">AVG</th></>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody className="text-gray-800 font-bold text-center">
-                      <tr>
-                        {selectedPlayer.primaryRole === '투수' ? (
-                          <><td className="p-3">{selectedPlayer.pitching?.games}</td><td className="p-3">{selectedPlayer.pitching?.wins}</td><td className="p-3">{selectedPlayer.pitching?.losses}</td><td className="p-3">{selectedPlayer.pitching?.saves}</td><td className="p-3">{selectedPlayer.pitching?.innings}</td><td className="p-3">{selectedPlayer.pitching?.strikeouts}</td><td className="p-3 text-gray-900 text-lg">{selectedPlayer.pitching?.era}</td></>
-                        ) : (
-                          <><td className="p-3">{selectedPlayer.batting?.games}</td><td className="p-3">{selectedPlayer.batting?.atBats}</td><td className="p-3">{selectedPlayer.batting?.runs}</td><td className="p-3">{selectedPlayer.batting?.hits}</td><td className="p-3">{selectedPlayer.batting?.homeRuns}</td><td className="p-3">{selectedPlayer.batting?.rbi}</td><td className="p-3 text-gray-900 text-lg">{selectedPlayer.batting?.avg}</td></>
-                        )}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2"><span className="w-1 h-5 bg-gray-500 rounded"></span> 통산 기록 (Career)</h3>
-                <div className="overflow-x-auto bg-gray-50/50 rounded-xl border border-gray-200">
-                  <table className="w-full text-sm">
-                    <thead className="text-gray-600 border-b border-gray-200">
-                      <tr>
-                        {selectedPlayer.primaryRole === '투수' ? (
-                          <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold text-gray-800">ERA</th></>
-                        ) : (
-                          <><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">AB</th><th className="p-3 font-semibold">R</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">HR</th><th className="p-3 font-semibold">RBI</th><th className="p-3 font-semibold text-gray-800">AVG</th></>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody className="text-gray-800 font-bold text-center">
-                      <tr>
-                        {selectedPlayer.primaryRole === '투수' ? (
-                          <><td className="p-3">{selectedPlayer.pitching?.career?.games || 0}</td><td className="p-3">{selectedPlayer.pitching?.career?.wins || 0}</td><td className="p-3">{selectedPlayer.pitching?.career?.losses || 0}</td><td className="p-3">{selectedPlayer.pitching?.career?.saves || 0}</td><td className="p-3">{selectedPlayer.pitching?.career?.innings || 0}</td><td className="p-3">{selectedPlayer.pitching?.career?.strikeouts || 0}</td><td className="p-3 text-gray-900 text-lg">{selectedPlayer.pitching?.career?.era || '0.00'}</td></>
-                        ) : (
-                          <><td className="p-3">{selectedPlayer.batting?.career?.games || 0}</td><td className="p-3">{selectedPlayer.batting?.career?.atBats || 0}</td><td className="p-3">{selectedPlayer.batting?.career?.runs || 0}</td><td className="p-3">{selectedPlayer.batting?.career?.hits || 0}</td><td className="p-3">{selectedPlayer.batting?.career?.homeRuns || 0}</td><td className="p-3">{selectedPlayer.batting?.career?.rbi || 0}</td><td className="p-3 text-gray-900 text-lg">{selectedPlayer.batting?.career?.avg || '0.000'}</td></>
-                        )}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -2608,9 +3231,9 @@ export default function App() {
             <p className="text-sm text-gray-500 mb-5">현재 공격 팀 선수 중 한 명을 선택하세요.</p>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {getCurrentOffensePlayers().map((player, idx) => (
-                <button key={`runner-assign-${player.id}-${idx}`} onClick={() => assignRunnerToBase(player.name)} className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-slate-800 hover:bg-gray-50 transition-colors">
-                  <div className="font-bold text-gray-800">{player.name}</div>
-                  <div className="text-xs text-gray-500">No.{player.uniformNumber} · {player.assignedPosition || player.position}</div>
+                <button key={`runner-assign-${player.id || idx}`} onClick={() => assignRunnerToBase(player.name)} className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-slate-800 hover:bg-gray-50 transition-colors">
+                  <div className="font-bold text-gray-800">{String(player.name)}</div>
+                  <div className="text-xs text-gray-500">No.{player.uniformNumber} · {String(player.assignedPosition || player.position)}</div>
                 </button>
               ))}
             </div>
@@ -2623,7 +3246,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setRunnerActionBase(null)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <h3 className="text-xl font-black text-gray-800 mb-1">{runnerActionBase + 1}루 주자 액션</h3>
-            <p className="text-sm text-gray-500 mb-5">주자: <span className="font-bold text-gray-700">{gameState.bases[runnerActionBase]?.name}</span></p>
+            <p className="text-sm text-gray-500 mb-5">주자: <span className="font-bold text-gray-700">{String(gameState.bases[runnerActionBase]?.name || '')}</span></p>
             <div className="space-y-2">
               <button onClick={() => handleRunnerAction(runnerActionBase, '도루')} className="w-full bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors">도루 (한 베이스 진루)</button>
               <button onClick={() => handleRunnerAction(runnerActionBase, '폭투')} className="w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition-colors">폭투 (한 베이스 진루)</button>
