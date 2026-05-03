@@ -2540,7 +2540,7 @@ const confirmEndGame = () => {
                         </>
                       )}
                     </div>
-                    <h3 className="text-xl font-bold text-gray-800 mb-1">{player.uniformNumber ? `${player.uniformNumber}. ${player.name}` : player.name}</h3>
+                    <h3 className="text-xl font-bold text-gray-800 mb-1">{player.name}</h3>
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${player.primaryRole === '타자' ? 'bg-slate-100 text-slate-700' : 'bg-gray-100 text-gray-700'}`}>{player.position}</span>
                   </button>
                 ))}
@@ -3162,7 +3162,7 @@ const confirmEndGame = () => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-gray-300 font-bold text-sm tracking-widest mb-1">POLARIS · {String(selectedPlayer.position)}</p>
-              <h2 className="text-4xl font-black mb-2 truncate">{selectedPlayer.uniformNumber ? `${selectedPlayer.uniformNumber}. ${String(selectedPlayer.name)}` : String(selectedPlayer.name)}</h2>
+              <h2 className="text-4xl font-black mb-2 truncate">{String(selectedPlayer.name)}</h2>
               <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${selectedPlayer.primaryRole === '투수' ? 'bg-gray-600' : 'bg-gray-500'}`}>
                 {String(selectedPlayer.primaryRole)}
               </span>
