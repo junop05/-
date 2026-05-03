@@ -1478,144 +1478,107 @@ export default function App() {
     };
   };
 
-  
-const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
+  const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
   if (!finishedState || !user) return;
-
   const gameDate = finishedState.gameDate || new Date().toISOString().slice(0, 10);
-  const gameYear = gameDate.slice(0, 4);
+  const gameYear = gameDate.substring(0, 4);
 
-  const isRegular = finishedState.mode === 'regular_play';
-  const polarisTeamKey = isRegular ? (finishedState.venue === 'home' ? 'teamB' : 'teamA') : null;
-  const opponentTeamKey = isRegular ? (polarisTeamKey === 'teamA' ? 'teamB' : 'teamA') : null;
+  const polarisTeamKey = finishedState.mode === 'regular_play'
+    ? (finishedState.venue === 'home' ? 'teamB' : 'teamA')
+    : null;
+  const opponentTeamKey = finishedState.mode === 'regular_play'
+    ? (polarisTeamKey === 'teamA' ? 'teamB' : 'teamA')
+    : null;
 
-  const winningTeamKey =
-    finishedState.teamA.score > finishedState.teamB.score
-      ? 'teamA'
-      : finishedState.teamB.score > finishedState.teamA.score
-        ? 'teamB'
-        : null;
+  const winningTeamKey = finishedState.teamA.score > finishedState.teamB.score ? 'teamA' : finishedState.teamB.score > finishedState.teamA.score ? 'teamB' : null;
+  const losingTeamKey = winningTeamKey === 'teamA' ? 'teamB' : winningTeamKey === 'teamB' ? 'teamA' : null;
 
-  const losingTeamKey =
-    winningTeamKey === 'teamA' ? 'teamB' : winningTeamKey === 'teamB' ? 'teamA' : null;
-
-  const shouldApplySeason = (teamKey) => {
-    if (!isRegular) return true;
+  const teamKeyToSeasonUpdater = (teamKey) => {
+    if (finishedState.mode === 'scrimmage_play') return true;
     return teamKey === polarisTeamKey;
   };
 
   for (const player of players) {
-    const next = {
-      ...player,
-      batting: { ...(player.batting || createBaseBatting()) },
-      pitching: { ...(player.pitching || createBasePitching()) },
-      yearlyStats: { ...(player.yearlyStats || {}) }
-    };
-
-    if (!next.yearlyStats[gameYear]) {
-      next.yearlyStats[gameYear] = {
-        batting: createBaseBatting(),
-        pitching: createBasePitching()
-      };
-    } else {
-      next.yearlyStats[gameYear] = {
-        batting: { ...(next.yearlyStats[gameYear].batting || createBaseBatting()) },
-        pitching: { ...(next.yearlyStats[gameYear].pitching || createBasePitching()) }
-      };
+    let updated = { ...player, batting: { ...player.batting }, pitching: { ...player.pitching } };
+    updated.yearlyStats = updated.yearlyStats || {};
+    if (!updated.yearlyStats[gameYear]) {
+      updated.yearlyStats[gameYear] = { batting: createBaseBatting(), pitching: createBasePitching() };
     }
-
     let changed = false;
 
-    for (const teamKey of ['teamA', 'teamB']) {
-      if (!shouldApplySeason(teamKey)) continue;
-
-      const lineup = finishedState?.[teamKey]?.lineup || [];
-      const foundBatter = lineup.find((lp) => String(lp.id) === String(player.id));
-
-      if (foundBatter?.gameStats) {
-        next.batting = updateBatterSeasonStats(next.batting, foundBatter.gameStats);
-        next.yearlyStats[gameYear].batting = updateBatterSeasonStats(
-          next.yearlyStats[gameYear].batting,
-          foundBatter.gameStats
-        );
+    ['teamA', 'teamB'].forEach(teamKey => {
+      if (!teamKeyToSeasonUpdater(teamKey)) return;
+      const foundB = finishedState[teamKey].lineup.find(p => String(p.id) === String(player.id));
+      if (foundB?.gameStats) {
+        updated.batting = updateBatterSeasonStats(updated.batting, foundB.gameStats);
+        updated.yearlyStats[gameYear].batting = updateBatterSeasonStats(updated.yearlyStats[gameYear].batting, foundB.gameStats);
         changed = true;
       }
 
-      const appearances = finishedState?.[teamKey]?.pitcherAppearances || [];
+      const appearances = finishedState[teamKey]?.pitcherAppearances || [];
       appearances.forEach((app, idx) => {
-        if (String(app.pitcherId) !== String(player.id)) return;
-
-        const isWinningPitcher = winningTeamKey === teamKey && idx === 0;
-        const isLosingPitcher = losingTeamKey === teamKey && idx === 0;
-
-        next.pitching = updatePitcherSeasonStats(
-          next.pitching,
-          app.stats || {},
-          isWinningPitcher,
-          isLosingPitcher
-        );
-
-        next.yearlyStats[gameYear].pitching = updatePitcherSeasonStats(
-          next.yearlyStats[gameYear].pitching,
-          app.stats || {},
-          isWinningPitcher,
-          isLosingPitcher
-        );
-
-        changed = true;
+        if (String(app.pitcherId) === String(player.id)) {
+          updated.pitching = updatePitcherSeasonStats(
+            updated.pitching, app.stats, winningTeamKey === teamKey && idx === 0, losingTeamKey === teamKey && idx === 0
+          );
+          updated.yearlyStats[gameYear].pitching = updatePitcherSeasonStats(
+            updated.yearlyStats[gameYear].pitching, app.stats, winningTeamKey === teamKey && idx === 0, losingTeamKey === teamKey && idx === 0
+          );
+          changed = true;
+        }
       });
-    }
+    });
 
     if (changed) {
-      await setDoc(doc(db, 'polaris_players', String(player.id)), next);
+      await setDoc(doc(db, 'polaris_players', player.id.toString()), updated);
     }
   }
 
+  const isRegular = finishedState.mode === 'regular_play';
   const opponentName = isRegular ? (finishedState.opponentName?.trim() || '상대팀') : '자체 청백전';
   const home = isRegular ? (finishedState.venue === 'home' ? '폴라리스' : opponentName) : '백팀';
   const away = isRegular ? (finishedState.venue === 'home' ? opponentName : '폴라리스') : '청팀';
-  const homeScore = Number(finishedState.teamB?.score || 0);
-  const awayScore = Number(finishedState.teamA?.score || 0);
+  const homeScore = finishedState.teamB.score;
+  const awayScore = finishedState.teamA.score;
 
-  let result = '-';
+  let result = '무';
   if (isRegular) {
     const polarisScore = finishedState.venue === 'home' ? homeScore : awayScore;
-    const oppScore = finishedState.venue === 'home' ? awayScore : homeScore;
-    result = polarisScore > oppScore ? '승' : polarisScore < oppScore ? '패' : '무';
+    const opponentScore = finishedState.venue === 'home' ? awayScore : homeScore;
+    result = polarisScore > opponentScore ? '승' : polarisScore < opponentScore ? '패' : '무';
+  } else {
+    result = '-';
   }
 
   const viewTeamKey = isRegular ? polarisTeamKey : 'teamA';
-  const enemyViewKey = isRegular ? opponentTeamKey : 'teamB';
-
-  const polarisSummary = finishedState.summary?.[viewTeamKey] || {};
-  const opponentSummary = finishedState.summary?.[enemyViewKey] || {};
-  const polarisPitcher = finishedState?.[viewTeamKey]?.pitcher || null;
-  const polarisPitcherStats = finishedState?.[viewTeamKey]?.pitcherGameStats || {};
-
-  const polarisPitchers = (finishedState?.[viewTeamKey]?.pitcherAppearances || []).map((app) => ({
+  const polarisSummary = finishedState.summary[viewTeamKey];
+  const opponentSummary = finishedState.summary[isRegular ? opponentTeamKey : 'teamB'];
+  const polarisPitcher = finishedState[viewTeamKey].pitcher;
+  const polarisPitcherStats = finishedState[viewTeamKey].pitcherGameStats;
+  const polarisPitchers = (finishedState[viewTeamKey].pitcherAppearances || []).map(app => ({
     name: app.pitcherName,
     uniformNumber: app.uniformNumber,
-    ...(app.stats || {})
+    ...app.stats
   }));
 
   const detailPayload = {
-    inningScores: finishedState.inningScores || {},
-    summary: finishedState.summary || {},
+    inningScores: finishedState.inningScores,
+    summary: finishedState.summary,
     opponentName,
     venue: finishedState.venue,
-    playEvents: finishedState.playEvents || [],
-    lineup: (finishedState?.[viewTeamKey]?.lineup || []).map((pl, index) => ({
-      id: pl.id,
+    playEvents: finishedState.playEvents,
+    lineup: finishedState[viewTeamKey].lineup.map((player, index) => ({
+      id: player.id,
       order: index + 1,
-      position: pl.assignedPosition || pl.position || '미정',
-      name: pl.name,
-      uniformNumber: pl.uniformNumber,
-      ...(pl.gameStats || {}),
-      seasonAvg: pl.avg || '0.000'
+      position: player.assignedPosition || player.position,
+      name: player.name,
+      uniformNumber: player.uniformNumber,
+      ...player.gameStats,
+      seasonAvg: player.avg
     })),
     pitcher: {
-      name: polarisPitcher?.name || '',
-      uniformNumber: polarisPitcher?.uniformNumber || '',
+      name: polarisPitcher?.name,
+      uniformNumber: polarisPitcher?.uniformNumber,
       ...polarisPitcherStats
     },
     pitchers: polarisPitchers,
@@ -1623,18 +1586,15 @@ const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
     scoreboard: {
       polaris: isRegular ? (finishedState.venue === 'home' ? homeScore : awayScore) : awayScore,
       opponent: isRegular ? (finishedState.venue === 'home' ? awayScore : homeScore) : homeScore,
-      home,
-      away,
-      homeScore,
-      awayScore
+      home, away, homeScore, awayScore
     },
     statBars: [
-      { label: '안타', left: opponentSummary.hits || 0, right: polarisSummary.hits || 0 },
-      { label: '홈런', left: opponentSummary.homeRuns || 0, right: polarisSummary.homeRuns || 0 },
-      { label: '도루', left: opponentSummary.steals || 0, right: polarisSummary.steals || 0 },
-      { label: '삼진', left: opponentSummary.strikeouts || 0, right: polarisSummary.strikeouts || 0 },
-      { label: '실책', left: opponentSummary.errors || 0, right: polarisSummary.errors || 0 },
-      { label: '사사구', left: opponentSummary.walks || 0, right: polarisSummary.walks || 0 }
+      { label: '안타', left: opponentSummary?.hits || 0, right: polarisSummary?.hits || 0 },
+      { label: '홈런', left: opponentSummary?.homeRuns || 0, right: polarisSummary?.homeRuns || 0 },
+      { label: '도루', left: opponentSummary?.steals || 0, right: polarisSummary?.steals || 0 },
+      { label: '삼진', left: opponentSummary?.strikeouts || 0, right: polarisSummary?.strikeouts || 0 },
+      { label: '실책', left: opponentSummary?.errors || 0, right: polarisSummary?.errors || 0 },
+      { label: '사사구', left: opponentSummary?.walks || 0, right: polarisSummary?.walks || 0 }
     ],
     mvpId: mvpId || null
   };
@@ -1644,20 +1604,210 @@ const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
     id: newGameId,
     date: gameDate,
     opponent: opponentName,
-    home,
-    away,
-    homeScore,
-    awayScore,
-    result,
+    home, away, homeScore, awayScore, result,
     detail: detailPayload
   };
 
   await setDoc(doc(db, 'polaris_games', newGameId), newGame);
   setActiveTab('records');
+
+
+
+const handleManualBaseAssign = (baseIndex) => {
+  if (!gameState) return;
+  const allBasesEmpty = gameState.bases.every(b => b === null);
+  const isFirstBase = baseIndex === 0;
+  const isStartLikeState = allBasesEmpty && gameState.outs === 0;
+
+  if (gameState.bases[baseIndex]) {
+    setManualBaseAssign(null);
+    setRunnerActionBase(baseIndex);
+    return;
+  }
+  if (isFirstBase && isStartLikeState) {
+    setRunnerActionBase(null);
+    setManualBaseAssign(0);
+  }
+};
+
+const assignRunnerToBase = (playerName) => {
+  executeWithHistory(() => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const newBases = [...prev.bases];
+      const defenseTeam = prev.half === 'top' ? 'teamB' : 'teamA';
+      newBases[0] = { name: playerName, respPitcher: prev[defenseTeam].pitcher.id, isEarned: false };
+      const isTop = prev.half === 'top';
+      return {
+        ...prev,
+        bases: newBases,
+        logs: [`[${prev.inning}회${isTop ? '초' : '말'}] 수동 주자 배치 - ${playerName} 1루 배치`, ...prev.logs]
+      };
+    });
+  });
+  setManualBaseAssign(null);
+};
+
+const downloadLineupCard = () => {
+  if (!gameState) return;
+  const polarisKey = gameState.venue === 'home' ? 'teamB' : 'teamA';
+  const team = gameState[polarisKey];
+  const pitcher = players.find(p => String(p.id) === String(team.pitcherId));
+  
+  let text = `폴라리스 라인업카드\n`;
+  text += `상대: ${gameState.opponentName} / ${gameState.venue === 'home' ? '홈' : '원정'}\n`;
+  text += `날짜: ${new Date().toLocaleDateString('ko-KR')}\n\n`;
+  text += `[선발 투수] ${pitcher ? `${pitcher.name} (No.${pitcher.uniformNumber})` : '미정'}\n\n`;
+  text += `[타순]\n`;
+  team.lineup.forEach((slot, i) => {
+    const p = players.find(pl => String(pl.id) === String(slot.playerId));
+    if (p) text += `${i + 1}. ${p.name} (No.${p.uniformNumber}) - ${slot.assignedPosition || p.position}\n`;
+  });
+
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lineup_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
 };
 
 
-const confirmEndGame = () => {
+    const polarisTeamKey = finishedState.mode === 'regular_play'
+      ? (finishedState.venue === 'home' ? 'teamB' : 'teamA')
+      : null;
+    const opponentTeamKey = finishedState.mode === 'regular_play'
+      ? (polarisTeamKey === 'teamA' ? 'teamB' : 'teamA')
+      : null;
+
+    const winningTeamKey = finishedState.teamA.score > finishedState.teamB.score ? 'teamA' : finishedState.teamB.score > finishedState.teamA.score ? 'teamB' : null;
+    const losingTeamKey = winningTeamKey === 'teamA' ? 'teamB' : winningTeamKey === 'teamB' ? 'teamA' : null;
+
+    const teamKeyToSeasonUpdater = (teamKey) => {
+      if (finishedState.mode === 'scrimmage_play') return true;
+      return teamKey === polarisTeamKey;
+    };
+
+    for (const player of players) {
+      let updated = { ...player, batting: { ...player.batting }, pitching: { ...player.pitching } };
+      updated.yearlyStats = updated.yearlyStats || {};
+      if (!updated.yearlyStats[gameYear]) {
+        updated.yearlyStats[gameYear] = { batting: createBaseBatting(), pitching: createBasePitching() };
+      }
+      
+      let changed = false;
+      
+      ['teamA', 'teamB'].forEach(teamKey => {
+        if (!teamKeyToSeasonUpdater(teamKey)) return;
+        const foundB = finishedState[teamKey].lineup.find(p => String(p.id) === String(player.id));
+        if (foundB?.gameStats) {
+          updated.batting = updateBatterSeasonStats(updated.batting, foundB.gameStats);
+          updated.yearlyStats[gameYear].batting = updateBatterSeasonStats(updated.yearlyStats[gameYear].batting, foundB.gameStats);
+          changed = true;
+        }
+
+        const appearances = finishedState[teamKey]?.pitcherAppearances || [];
+        appearances.forEach((app, idx) => {
+          if (String(app.pitcherId) === String(player.id)) {
+            updated.pitching = updatePitcherSeasonStats(
+              updated.pitching, app.stats, winningTeamKey === teamKey && idx === 0, losingTeamKey === teamKey && idx === 0
+            );
+            updated.yearlyStats[gameYear].pitching = updatePitcherSeasonStats(
+              updated.yearlyStats[gameYear].pitching, app.stats, winningTeamKey === teamKey && idx === 0, losingTeamKey === teamKey && idx === 0
+            );
+            changed = true;
+          }
+        });
+      });
+      
+      if (changed) {
+         await setDoc(doc(db, 'polaris_players', player.id.toString()), updated);
+      }
+    }
+
+
+
+    const isRegular = finishedState.mode === 'regular_play';
+    const opponentName = isRegular ? (finishedState.opponentName?.trim() || '상대팀') : '자체 청백전';
+    const home = isRegular ? (finishedState.venue === 'home' ? '폴라리스' : opponentName) : '백팀';
+    const away = isRegular ? (finishedState.venue === 'home' ? opponentName : '폴라리스') : '청팀';
+    const homeScore = finishedState.teamB.score;
+    const awayScore = finishedState.teamA.score;
+    
+    let result = '무';
+    if (isRegular) {
+      const polarisScore = finishedState.venue === 'home' ? homeScore : awayScore;
+      const opponentScore = finishedState.venue === 'home' ? awayScore : homeScore;
+      result = polarisScore > opponentScore ? '승' : polarisScore < opponentScore ? '패' : '무';
+    } else {
+      result = '-';
+    }
+    
+    const today = new Date().toISOString().slice(0, 10);
+    const viewTeamKey = isRegular ? polarisTeamKey : 'teamA';
+    const polarisSummary = finishedState.summary[viewTeamKey];
+    const opponentSummary = finishedState.summary[isRegular ? opponentTeamKey : 'teamB'];
+    const polarisPitcher = finishedState[viewTeamKey].pitcher;
+    const polarisPitcherStats = finishedState[viewTeamKey].pitcherGameStats;
+    const polarisPitchers = (finishedState[viewTeamKey].pitcherAppearances || []).map(app => ({
+      name: app.pitcherName,
+      uniformNumber: app.uniformNumber,
+      ...app.stats
+    }));
+
+    const detailPayload = {
+      inningScores: finishedState.inningScores,
+      summary: finishedState.summary,
+      opponentName,
+      venue: finishedState.venue,
+      playEvents: finishedState.playEvents,
+      lineup: finishedState[viewTeamKey].lineup.map((player, index) => ({
+        id: player.id,
+        order: index + 1,
+        position: player.assignedPosition || player.position,
+        name: player.name,
+        uniformNumber: player.uniformNumber,
+        ...player.gameStats,
+        seasonAvg: player.avg
+      })),
+      pitcher: {
+        name: polarisPitcher?.name,
+        uniformNumber: polarisPitcher?.uniformNumber,
+        ...polarisPitcherStats
+      },
+      pitchers: polarisPitchers,
+      officials: { recorder: 'Polaris Record Mode' },
+      scoreboard: {
+        polaris: isRegular ? (finishedState.venue === 'home' ? homeScore : awayScore) : awayScore,
+        opponent: isRegular ? (finishedState.venue === 'home' ? awayScore : homeScore) : homeScore,
+        home, away, homeScore, awayScore
+      },
+      statBars: [
+        { label: '안타', left: opponentSummary?.hits || 0, right: polarisSummary?.hits || 0 },
+        { label: '홈런', left: opponentSummary?.homeRuns || 0, right: polarisSummary?.homeRuns || 0 },
+        { label: '도루', left: opponentSummary?.steals || 0, right: polarisSummary?.steals || 0 },
+        { label: '삼진', left: opponentSummary?.strikeouts || 0, right: polarisSummary?.strikeouts || 0 },
+        { label: '실책', left: opponentSummary?.errors || 0, right: polarisSummary?.errors || 0 },
+        { label: '사사구', left: opponentSummary?.walks || 0, right: polarisSummary?.walks || 0 }
+      ],
+      mvpId: mvpId || null
+    };
+
+    const newGameId = Date.now().toString();
+    const newGame = {
+      id: newGameId,
+      date: gameDate,
+      opponent: opponentName,
+      home, away, homeScore, awayScore, result,
+      detail: detailPayload
+    };
+    
+    await setDoc(doc(db, 'polaris_games', newGameId), newGame);
+    setActiveTab('records');
+  };
+
+  const confirmEndGame = () => {
     finalizeAndPersistGameStats(gameState, endGameMvp);
     setGameState(null);
     setRunnerActionBase(null);
