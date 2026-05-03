@@ -233,11 +233,12 @@ function InningBox({ detail }) {
 // 메인 App 컴포넌트
 // ==========================================
 export default function App() {
-  /* LANDING_TIMING_PATCH_CONST */
-  const DEFAULT_BG = '/background.JPG';
-  const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
+  /* POLARIS_PATCH_V4_STATE */
+  const DEFAULT_BG = DEFAULT_BG;
+  const AUTO_IMPORT_ENDPOINT = import.meta.env.VITE_AUTO_IMPORT_ENDPOINT || '';
   const [landingBgLoaded, setLandingBgLoaded] = useState(false);
   const [landingAnimReady, setLandingAnimReady] = useState(false);
+  const [isAutoImporting, setIsAutoImporting] = useState(false);
   const [activeTab, setActiveTab] = useState('landing');
   const [adminSubTab, setAdminSubTab] = useState('dashboard');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -353,16 +354,12 @@ export default function App() {
     });
 
     const unsubSettings = onSnapshot(collection(db, 'polaris_settings'), (snap) => {
-      const bgDoc = snap.docs.find((d) => d.id === 'background_current');
+      const bgDoc = snap.docs.find(d => d.id === 'background_current');
       if (bgDoc) {
         const data = bgDoc.data();
-        setCustomBackground(data?.imageUrl || DEFAULT_BG);
-        setBgSettings(data?.settings || { scale: 1, posX: 50, posY: 50 });
-      } else {
-        setCustomBackground(DEFAULT_BG);
-        setBgSettings({ scale: 1, posX: 50, posY: 50 });
+        if (data.imageUrl) setCustomBackground(data.imageUrl);
+        if (data.settings) setBgSettings(data.settings);
       }
-      setIsSettingsLoaded(true);
     });
 
     return () => {
@@ -375,33 +372,23 @@ export default function App() {
     };
   }, [user]);
 
-    /* LANDING_TIMING_PATCH_EFFECT */
+    /* POLARIS_PATCH_V4_LANDING_EFFECT */
   useEffect(() => {
-    if (!isSettingsLoaded || !customBackground) return;
-    let canceled = false;
-
+    if (!isSettingsFetched || !customBackground) return;
     setLandingBgLoaded(false);
     setLandingAnimReady(false);
 
     const img = new Image();
     img.onload = () => {
-      if (canceled) return;
       setLandingBgLoaded(true);
-      requestAnimationFrame(() => {
-        if (!canceled) setLandingAnimReady(true);
-      });
+      requestAnimationFrame(() => setLandingAnimReady(true));
     };
     img.onerror = () => {
-      if (canceled) return;
       setLandingBgLoaded(true);
       setLandingAnimReady(true);
     };
     img.src = customBackground;
-
-    return () => {
-      canceled = true;
-    };
-  }, [isSettingsLoaded, customBackground]);
+  }, [isSettingsFetched, customBackground]);
 const allPlayers = useMemo(() => players, [players]);
 
   const handleInputChange = (e) => {
@@ -1251,7 +1238,7 @@ const allPlayers = useMemo(() => players, [players]);
           hits: countAsHit ? 1 : 0,
           homeRuns: actionLabel === '홈런' ? 1 : 0,
           walks: ['볼넷', '사구'].includes(actionLabel) ? 1 : 0,
-          strikeouts: (actionLabel === '삼진' || isDroppedThirdStrike) ? 1 : 0,
+          strikeouts: actionLabel === '삼진' ? 1 : 0,
           rbi: 0, runs: 0, steals: 0, errors: 0
         };
         let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
@@ -1259,7 +1246,6 @@ const allPlayers = useMemo(() => players, [players]);
         const isErrorPlay = actionLabel.startsWith('실책-');
         const isFielderChoice = actionLabel === '야수선택';
         const isDoublePlay = actionLabel === '병살타';
-         const isDroppedThirdStrike = actionLabel === '낫아웃 출루';
 
         const processRunnerScoring = (runnerObj) => {
           runsScored++;
@@ -1341,7 +1327,7 @@ const allPlayers = useMemo(() => players, [players]);
           const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
           newBases = [null, null, null];
 
-          if (actionLabel === '볼넷' || actionLabel === '사구' || isDroppedThirdStrike) {
+          if (actionLabel === '볼넷' || actionLabel === '사구') {
             const occupied = [state.bases[0], state.bases[1], state.bases[2]];
             const third = occupied[2];
             const second = occupied[1];
@@ -1350,8 +1336,7 @@ const allPlayers = useMemo(() => players, [players]);
             newBases[2] = second && first ? second : third;
             newBases[1] = first ? first : second;
             newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
-            if (actionLabel === '볼넷' || actionLabel === '사구') pitchingDelta.walksAllowed += 1;
-             if (isDroppedThirdStrike) pitchingDelta.strikeouts += 1;
+            pitchingDelta.walksAllowed += 1;
           } else {
             runnersOn.forEach(({ runnerObj, base }) => {
               const nextBase = base + basesToAdvance;
@@ -1389,7 +1374,7 @@ const allPlayers = useMemo(() => players, [players]);
             ...state.summary[battingTeam],
             hits: (state.summary[battingTeam]?.hits || 0) + (countAsHit ? 1 : 0),
             homeRuns: (state.summary[battingTeam]?.homeRuns || 0) + (actionLabel === '홈런' ? 1 : 0),
-            strikeouts: (state.summary[battingTeam]?.strikeouts || 0) + ((actionLabel === '삼진' || actionLabel === '낫아웃 출루') ? 1 : 0),
+            strikeouts: (state.summary[battingTeam]?.strikeouts || 0) + (actionLabel === '삼진' ? 1 : 0),
             walks: (state.summary[battingTeam]?.walks || 0) + (['볼넷', '사구'].includes(actionLabel) ? 1 : 0)
           }
         };
@@ -1798,7 +1783,118 @@ const confirmEndGame = () => {
     e.target.value = '';
   };
 
-  const getPlayerKey = (player) => `${player.primaryRole}-${player.id}`;
+    /* POLARIS_PATCH_V4_AUTO_IMPORT */
+  const applyCareerDraftToPlayer = async (draft) => {
+    if (!draft || !user) return;
+
+    const no = Number(draft.uniformNumber);
+    const name = String(draft.name || '').trim();
+
+    const target =
+      players.find((p) => Number(p.uniformNumber) === no) ||
+      players.find((p) => String(p.name || '').trim() === name);
+
+    if (!target) {
+      alert('대상 선수를 찾지 못했습니다. 이름/등번호를 확인해주세요.');
+      return;
+    }
+
+    const b = draft.battingCareer || {};
+    const pit = draft.pitchingCareer || {};
+
+    const normInnings = (v) => {
+      const s = String(v ?? '0').trim();
+      if (!s) return '0';
+      if (s.includes(' ')) return s;
+      if (s.includes('.')) {
+        const [w, d] = s.split('.');
+        const o = d === '1' ? 1 : d === '2' ? 2 : 0;
+        return `${parseInt(w || '0', 10)} ${o}`;
+      }
+      return s;
+    };
+
+    const bHits = Number(b.hits || 0);
+    const bAb = Number(b.atBats || 0);
+    const bAvg = String(calculateBattingAverage(bHits, bAb));
+    const pEr = Number(pit.earnedRuns || 0);
+    const pIp = normInnings(pit.innings);
+    const pEra = String(calculateEra(pEr, pIp));
+
+    const updatedPlayer = {
+      ...target,
+      batting: {
+        ...(target.batting || createBaseBatting()),
+        career: {
+          games: Number(b.games || 0),
+          atBats: bAb,
+          runs: Number(b.runs || 0),
+          hits: bHits,
+          homeRuns: Number(b.homeRuns || 0),
+          rbi: Number(b.rbi || 0),
+          walks: Number(b.walks || 0),
+          strikeouts: Number(b.strikeouts || 0),
+          steals: Number(b.steals || 0),
+          errors: Number(b.errors || 0),
+          avg: bAvg
+        }
+      },
+      pitching: {
+        ...(target.pitching || createBasePitching()),
+        career: {
+          games: Number(pit.games || 0),
+          wins: Number(pit.wins || 0),
+          losses: Number(pit.losses || 0),
+          saves: Number(pit.saves || 0),
+          innings: pIp,
+          strikeouts: Number(pit.strikeouts || 0),
+          runsAllowed: Number(pit.runsAllowed || 0),
+          earnedRuns: pEr,
+          hitsAllowed: Number(pit.hitsAllowed || 0),
+          walksAllowed: Number(pit.walksAllowed || 0),
+          battersFaced: Number(pit.battersFaced || 0),
+          era: pEra
+        }
+      }
+    };
+
+    await setDoc(doc(db, 'polaris_players', String(target.id)), updatedPlayer);
+    alert(`${target.name} 선수 통산 기록 자동 반영 완료`);
+  };
+
+  const handleAutoImportImage = async (e, mode = 'game') => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !user) return;
+
+    if (!AUTO_IMPORT_ENDPOINT || !AUTO_IMPORT_ENDPOINT.trim()) {
+      alert('VITE_AUTO_IMPORT_ENDPOINT 환경변수를 먼저 설정해주세요.');
+      return;
+    }
+
+    try {
+      setIsAutoImporting(true);
+      const imageDataUrl = await resizeImage(file, 2200, 2200);
+
+      const resp = await fetch(AUTO_IMPORT_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, imageDataUrl })
+      });
+
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data?.error || '자동 분석 실패');
+
+      if (mode === 'career') await applyCareerDraftToPlayer(data.draft || {});
+      else alert('경기 결과 자동 업로드 완료');
+    } catch (err) {
+      console.error(err);
+      alert(err.message || '자동 분석 중 오류가 발생했습니다.');
+    } finally {
+      setIsAutoImporting(false);
+    }
+  };
+const getPlayerKey = (player) => `${player.primaryRole}-${player.id}`;
 
   const handlePlayerPhotoUpload = async (player, file) => {
     if (!file || !player || !user) return;
@@ -1906,7 +2002,7 @@ const confirmEndGame = () => {
         `}
       </style>
 
-      <div className={`absolute inset-0 z-0 bg-black overflow-hidden flex items-center justify-center transition-opacity duration-500 ${landingBgLoaded ? 'opacity-100' : 'opacity-0'}`}>
+      <div className="absolute inset-0 z-0 bg-black overflow-hidden flex items-center justify-center">
         <img 
           src={customBackground || DEFAULT_BG} 
           alt="팀 배경 사진" 
@@ -1927,8 +2023,8 @@ const confirmEndGame = () => {
              textShadow: "6px 6px 0 #000, 10px 10px 25px rgba(0,0,0,0.9)"
           }}
         >
-          <span className={`block text-5xl md:text-7xl lg:text-[6rem] tracking-widest mb-2 md:mb-4 text-gray-100 ${landingAnimReady ? 'animate-slide-left' : 'opacity-0'}`}>순천향의대</span>
-          <span className={`block text-5xl md:text-7xl lg:text-[6rem] tracking-widest text-gray-100 ${landingAnimReady ? 'animate-slide-right' : 'opacity-0'}`}>폴라리스</span>
+          <span className="block text-5xl md:text-7xl lg:text-[6rem] tracking-widest mb-2 md:mb-4 text-gray-100 animate-slide-left">순천향의대</span>
+          <span className="block text-5xl md:text-7xl lg:text-[6rem] tracking-widest text-gray-100 animate-slide-right">폴라리스</span>
         </h1>
 
       </div>
@@ -2810,6 +2906,17 @@ const confirmEndGame = () => {
 
         {adminSubTab === 'gameRecord' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 min-h-[600px]">
+            <div className="mb-6 flex flex-wrap items-center gap-3">
+              <label className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm cursor-pointer transition-colors ${isAutoImporting ? 'bg-gray-200 text-gray-500' : 'bg-slate-800 hover:bg-black text-white'}`}>
+                {isAutoImporting ? '분석 중...' : '경기 캡처 자동 업로드'}
+                <input type="file" accept="image/*" className="hidden" disabled={isAutoImporting} onChange={(e) => handleAutoImportImage(e, 'game')} />
+              </label>
+              <label className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm cursor-pointer transition-colors ${isAutoImporting ? 'bg-gray-200 text-gray-500' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
+                {isAutoImporting ? '분석 중...' : '통산 캡처 자동 분석'}
+                <input type="file" accept="image/*" className="hidden" disabled={isAutoImporting} onChange={(e) => handleAutoImportImage(e, 'career')} />
+              </label>
+              <span className="text-xs text-gray-500">경기 결과/선수 통산 캡처 이미지를 업로드하세요.</span>
+            </div>
             {!gameState ? (
               <div className="flex flex-col items-center justify-center h-full space-y-8 py-20">
                 <ClipboardList size={64} className="text-slate-800 mb-4" />
@@ -3007,7 +3114,6 @@ const confirmEndGame = () => {
                       
                       <button onClick={() => handleGameAction('볼넷', false, 1)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl shadow transition-colors">볼넷 (BB)</button>
                       <button onClick={() => handleGameAction('사구', false, 1)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl shadow transition-colors">사구 (HBP)</button>
-                      <button onClick={() => handleGameAction('낫아웃 출루', false, 1)} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl shadow transition-colors">낫아웃 출루</button>
                       
                       <button onClick={() => handleGameAction('실책 출루', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">실책 출루</button>
                       <button onClick={() => handleGameAction('야수선택', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">야수선택 (FC)</button>

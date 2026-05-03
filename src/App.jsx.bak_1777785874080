@@ -1251,7 +1251,7 @@ const allPlayers = useMemo(() => players, [players]);
           hits: countAsHit ? 1 : 0,
           homeRuns: actionLabel === '홈런' ? 1 : 0,
           walks: ['볼넷', '사구'].includes(actionLabel) ? 1 : 0,
-          strikeouts: (actionLabel === '삼진' || isDroppedThirdStrike) ? 1 : 0,
+          strikeouts: actionLabel === '삼진' ? 1 : 0,
           rbi: 0, runs: 0, steals: 0, errors: 0
         };
         let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
@@ -1259,7 +1259,6 @@ const allPlayers = useMemo(() => players, [players]);
         const isErrorPlay = actionLabel.startsWith('실책-');
         const isFielderChoice = actionLabel === '야수선택';
         const isDoublePlay = actionLabel === '병살타';
-         const isDroppedThirdStrike = actionLabel === '낫아웃 출루';
 
         const processRunnerScoring = (runnerObj) => {
           runsScored++;
@@ -1341,7 +1340,7 @@ const allPlayers = useMemo(() => players, [players]);
           const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
           newBases = [null, null, null];
 
-          if (actionLabel === '볼넷' || actionLabel === '사구' || isDroppedThirdStrike) {
+          if (actionLabel === '볼넷' || actionLabel === '사구') {
             const occupied = [state.bases[0], state.bases[1], state.bases[2]];
             const third = occupied[2];
             const second = occupied[1];
@@ -1350,8 +1349,7 @@ const allPlayers = useMemo(() => players, [players]);
             newBases[2] = second && first ? second : third;
             newBases[1] = first ? first : second;
             newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
-            if (actionLabel === '볼넷' || actionLabel === '사구') pitchingDelta.walksAllowed += 1;
-             if (isDroppedThirdStrike) pitchingDelta.strikeouts += 1;
+            pitchingDelta.walksAllowed += 1;
           } else {
             runnersOn.forEach(({ runnerObj, base }) => {
               const nextBase = base + basesToAdvance;
@@ -1389,7 +1387,7 @@ const allPlayers = useMemo(() => players, [players]);
             ...state.summary[battingTeam],
             hits: (state.summary[battingTeam]?.hits || 0) + (countAsHit ? 1 : 0),
             homeRuns: (state.summary[battingTeam]?.homeRuns || 0) + (actionLabel === '홈런' ? 1 : 0),
-            strikeouts: (state.summary[battingTeam]?.strikeouts || 0) + ((actionLabel === '삼진' || actionLabel === '낫아웃 출루') ? 1 : 0),
+            strikeouts: (state.summary[battingTeam]?.strikeouts || 0) + (actionLabel === '삼진' ? 1 : 0),
             walks: (state.summary[battingTeam]?.walks || 0) + (['볼넷', '사구'].includes(actionLabel) ? 1 : 0)
           }
         };
@@ -3007,7 +3005,6 @@ const confirmEndGame = () => {
                       
                       <button onClick={() => handleGameAction('볼넷', false, 1)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl shadow transition-colors">볼넷 (BB)</button>
                       <button onClick={() => handleGameAction('사구', false, 1)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl shadow transition-colors">사구 (HBP)</button>
-                      <button onClick={() => handleGameAction('낫아웃 출루', false, 1)} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl shadow transition-colors">낫아웃 출루</button>
                       
                       <button onClick={() => handleGameAction('실책 출루', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">실책 출루</button>
                       <button onClick={() => handleGameAction('야수선택', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">야수선택 (FC)</button>
