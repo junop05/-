@@ -972,6 +972,18 @@ const allPlayers = useMemo(() => players, [players]);
         };
       });
 
+/* [PATCH] pitcher-in-lineup */
+      // 투수가 타순에 없으면 자동으로 마지막 타순에 추가 (옵션 A)
+      const pitcherAlreadyInLineup = mappedLineup.some(
+        (p) => String(p.id) === String(pitcherRawId)
+      );
+      if (!pitcherAlreadyInLineup && pitcher) {
+        mappedLineup.push({
+          ...pitcher,
+          assignedPosition: pitcher.position || '1',
+          gameStats: {}
+        });
+      }
       newTeams[team] = {
         ...gameState[team],
         pitcher: pitcher,
@@ -2940,7 +2952,7 @@ const confirmEndGame = () => {
                                 <td className="p-3">
                                   <select className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white" value={slot.playerId} onChange={(e) => handleLineupChange(teamKey, idx, 'playerId', e.target.value)}>
                                     <option value="">타자 선택...</option>
-                                    <optgroup label="타자">{players.filter(p => ['타자','투타겸업'].includes(p.primaryRole)).map(b => <option key={`batter-opt-${b.id}`} value={b.id}>{b.name} (No.{b.uniformNumber})</option>)}</optgroup>
+                                    <optgroup label="타자">{players.filter(p => ['타자','투타겸업','투수'].includes(p.primaryRole)).map(b => <option key={`batter-opt-${b.id}`} value={b.id}>{b.name} (No.{b.uniformNumber})</option>)}</optgroup>
                                   </select>
                                 </td>
                                 <td className="p-3">

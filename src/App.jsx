@@ -2552,7 +2552,7 @@ const confirmEndGame = () => {
                         </>
                       )}
                     </div>
-                    <h3 className="text-xl font-bold text-gray-800 mb-1">{player.name}</h3>
+                    <h3 className="text-xl font-bold text-gray-800 mb-1">{/* [PATCH:locker-show-number] */}{player.uniformNumber}. {player.name}</h3>
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${player.primaryRole === '타자' ? 'bg-slate-100 text-slate-700' : 'bg-gray-100 text-gray-700'}`}>{player.position}</span>
                   </button>
                 ))}
