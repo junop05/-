@@ -2377,12 +2377,10 @@ const downloadLineupCard = () => {
           <h2 className="text-3xl font-black text-gray-800">팀 갤러리</h2>
           <p className="text-gray-500 mt-2">단체 사진을 업로드하면 피드 형식으로 표시됩니다.</p>
         </div>
-        {isAdminAuth && (
-          <label className="bg-slate-800 hover:bg-black text-white px-5 py-3 rounded-xl font-bold cursor-pointer transition-colors shadow-md text-center">
-            단체 사진 업로드
-            <input type="file" accept="image/*" multiple className="hidden" onChange={handleGalleryUpload} />
-          </label>
-        )}
+        <label className="bg-slate-800 hover:bg-black text-white px-5 py-3 rounded-xl font-bold cursor-pointer transition-colors shadow-md text-center">
+          단체 사진 업로드
+          <input type="file" accept="image/*" multiple className="hidden" onChange={handleGalleryUpload} />
+        </label>
       </div>
       <div className="space-y-6">
         {galleryPosts.map(post => (
@@ -2405,7 +2403,7 @@ const downloadLineupCard = () => {
           <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
             <Camera size={80} className="text-gray-300 mb-6" />
             <h3 className="text-3xl font-black text-gray-800 mb-4">첫 단체 사진을 올려보세요</h3>
-            <p className="text-gray-500 text-lg font-medium">관리자 모드 로그인 후 사진을 업로드할 수 있습니다.</p>
+            <p className="text-gray-500 text-lg font-medium">사진을 업로드하여 팀의 추억을 공유해 보세요.</p>
           </div>
         )}
       </div>
@@ -3067,14 +3065,12 @@ const downloadLineupCard = () => {
               <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${selectedPlayer.primaryRole === '투수' ? 'bg-gray-600' : 'bg-gray-500'}`}>
                 {String(selectedPlayer.primaryRole)}
               </span>
-              {isAdminAuth && (
-                <div className="mt-4">
-                  <label className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors">
-                    <Camera size={16} /> 프로필 사진 변경
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePlayerPhotoUpload(selectedPlayer, e.target.files?.[0])} />
-                  </label>
-                </div>
-              )}
+              <div className="mt-4">
+                <label className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors">
+                  <Camera size={16} /> 프로필 사진 변경
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePlayerPhotoUpload(selectedPlayer, e.target.files?.[0])} />
+                </label>
+              </div>
             </div>
             
             <div className="hidden md:flex flex-col items-center justify-center bg-white/5 rounded-xl p-4 ml-auto w-48 shrink-0">
