@@ -86,8 +86,8 @@ const resizeImage = (file, maxWidth = 1920, maxHeight = 1920) => {
 
 // --- 기본 기록 템플릿 ---
 const createBaseBatting = () => ({
-  games: 0, atBats: 0, runs: 0, hits: 0, singles: 0, doubles: 0, triples: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000',
-  career: { games: 0, atBats: 0, runs: 0, hits: 0, singles: 0, doubles: 0, triples: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000' }
+  games: 0, atBats: 0, runs: 0, hits: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000',
+  career: { games: 0, atBats: 0, runs: 0, hits: 0, homeRuns: 0, rbi: 0, walks: 0, strikeouts: 0, steals: 0, errors: 0, avg: '0.000' }
 });
 
 const createBasePitching = () => ({
@@ -490,8 +490,6 @@ const allPlayers = useMemo(() => players, [players]);
       b_atBats: player.batting?.career?.atBats || 0,
       b_runs: player.batting?.career?.runs || 0,
       b_hits: player.batting?.career?.hits || 0,
-      b_doubles: player.batting?.career?.doubles || 0,
-      b_triples: player.batting?.career?.triples || 0,
       b_homeRuns: player.batting?.career?.homeRuns || 0,
       b_rbi: player.batting?.career?.rbi || 0,
       b_walks: player.batting?.career?.walks || 0,
@@ -525,14 +523,6 @@ const allPlayers = useMemo(() => players, [players]);
     if (p) {
       const b_hits = parseInt(careerForm.b_hits) || 0;
       const b_ab = parseInt(careerForm.b_atBats) || 0;
-      const b_2b = parseInt(careerForm.b_doubles) || 0;
-      const b_3b = parseInt(careerForm.b_triples) || 0;
-      const b_hr = parseInt(careerForm.b_homeRuns) || 0;
-      if (b_2b + b_3b + b_hr > b_hits) {
-        alert('안타(H)는 2루타+3루타+홈런 합보다 크거나 같아야 합니다.');
-        return;
-      }
-      const b_1b = b_hits - (b_2b + b_3b + b_hr);
       const b_avg = String(calculateBattingAverage(b_hits, b_ab));
       
       const p_er = parseInt(careerForm.p_earnedRuns) || 0;
@@ -548,10 +538,7 @@ const allPlayers = useMemo(() => players, [players]);
             atBats: b_ab,
             runs: parseInt(careerForm.b_runs) || 0,
             hits: b_hits,
-            singles: b_1b,
-            doubles: b_2b,
-            triples: b_3b,
-            homeRuns: b_hr,
+            homeRuns: parseInt(careerForm.b_homeRuns) || 0,
             rbi: parseInt(careerForm.b_rbi) || 0,
             walks: parseInt(careerForm.b_walks) || 0,
             strikeouts: parseInt(careerForm.b_strikeouts) || 0,
@@ -1845,11 +1832,8 @@ const confirmEndGame = () => {
     const hr = stats.homeRuns || 0;
     
     const obp = ab + bb > 0 ? (h + bb) / (ab + bb) : 0;
-    const doubles = stats.doubles || 0;
-     const triples = stats.triples || 0;
-     const singles = typeof stats.singles === 'number' ? stats.singles : Math.max(0, h - doubles - triples - hr);
-     const tb = singles + doubles * 2 + triples * 3 + hr * 4;
-     const slg = ab > 0 ? tb / ab : 0;
+    const tb = (h - hr) + (hr * 4);
+    const slg = ab > 0 ? tb / ab : 0;
     const ops = obp + slg;
     
     return {
@@ -2099,27 +2083,6 @@ const confirmEndGame = () => {
     const pitchersByERA = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
     const pitchersByWins = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => b.wins - a.wins);
     const pitchersByK = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => b.strikeouts - a.strikeouts);
-    /* RECORD_RANK_PATCH_V1 */
-    const getH = (p) => Number(p?.stats?.hits ?? p?.hits ?? 0);
-    const getBB = (p) => Number(p?.stats?.walks ?? p?.walks ?? 0);
-    const getOnBase = (p) => getH(p) + getBB(p);
-    const getIPOuts = (p) => parseBaseballInningsToOuts(p?.stats?.innings ?? p?.innings ?? 0);
-
-    const battersByHits = [...players]
-      .filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0)
-      .map(b => getBatterStats(b, 'season'))
-      .sort((a, b) => getH(b) - getH(a));
-
-    const battersByOnBase = [...players]
-      .filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0)
-      .map(b => getBatterStats(b, 'season'))
-      .sort((a, b) => getOnBase(b) - getOnBase(a));
-
-    const pitchersByInnings = [...players]
-      .filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0)
-      .map(p => getPitcherStats(p, 'season'))
-      .sort((a, b) => getIPOuts(b) - getIPOuts(a));
-
 
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
@@ -2211,8 +2174,8 @@ const confirmEndGame = () => {
               <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3"><BarChart3 size={28} className="text-gray-800" /> 타자 TOP 5</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <RankTable title="타율" data={battersByAvg} getValue={p => p.avg} valueLabel="AVG" />
-                <RankTable title="안타" data={battersByHits} getValue={p => `${getH(p)}개`} valueLabel="H" />
-                <RankTable title="출루" data={battersByOnBase} getValue={p => `${getOnBase(p)}회`} valueLabel="OB" />
+                <RankTable title="홈런" data={battersByHR} getValue={p => `${p.homeRuns}개`} valueLabel="HR" />
+                <RankTable title="타점" data={battersByRBI} getValue={p => `${p.rbi}점`} valueLabel="RBI" />
               </div>
             </div>
 
@@ -2220,7 +2183,7 @@ const confirmEndGame = () => {
               <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3"><BarChart3 size={28} className="text-gray-800" /> 투수 TOP 5</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <RankTable title="평균자책점" data={pitchersByERA} getValue={p => p.era} valueLabel="ERA" />
-                <RankTable title="이닝" data={pitchersByInnings} getValue={p => outsToBaseballInnings(getIPOuts(p))} valueLabel="IP" />
+                <RankTable title="다승" data={pitchersByWins} getValue={p => `${p.wins}승`} valueLabel="W" />
                 <RankTable title="탈삼진" data={pitchersByK} getValue={p => `${p.strikeouts}K`} valueLabel="SO" />
               </div>
             </div>
@@ -3317,8 +3280,6 @@ const confirmEndGame = () => {
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">타수 (AB)</label><input type="number" name="b_atBats" value={careerForm.b_atBats} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">득점 (R)</label><input type="number" name="b_runs" value={careerForm.b_runs} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">안타 (H)</label><input type="number" name="b_hits" value={careerForm.b_hits} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
-                      <div><label className="block text-xs font-bold text-gray-500 mb-1">2루타 (2B)</label><input type="number" name="b_doubles" value={careerForm.b_doubles} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
-                      <div><label className="block text-xs font-bold text-gray-500 mb-1">3루타 (3B)</label><input type="number" name="b_triples" value={careerForm.b_triples} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">홈런 (HR)</label><input type="number" name="b_homeRuns" value={careerForm.b_homeRuns} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">타점 (RBI)</label><input type="number" name="b_rbi" value={careerForm.b_rbi} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">볼넷 (BB)</label><input type="number" name="b_walks" value={careerForm.b_walks} onChange={handleCareerInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500" min="0" /></div>

@@ -2099,27 +2099,6 @@ const confirmEndGame = () => {
     const pitchersByERA = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
     const pitchersByWins = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => b.wins - a.wins);
     const pitchersByK = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => b.strikeouts - a.strikeouts);
-    /* RECORD_RANK_PATCH_V1 */
-    const getH = (p) => Number(p?.stats?.hits ?? p?.hits ?? 0);
-    const getBB = (p) => Number(p?.stats?.walks ?? p?.walks ?? 0);
-    const getOnBase = (p) => getH(p) + getBB(p);
-    const getIPOuts = (p) => parseBaseballInningsToOuts(p?.stats?.innings ?? p?.innings ?? 0);
-
-    const battersByHits = [...players]
-      .filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0)
-      .map(b => getBatterStats(b, 'season'))
-      .sort((a, b) => getH(b) - getH(a));
-
-    const battersByOnBase = [...players]
-      .filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0)
-      .map(b => getBatterStats(b, 'season'))
-      .sort((a, b) => getOnBase(b) - getOnBase(a));
-
-    const pitchersByInnings = [...players]
-      .filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0)
-      .map(p => getPitcherStats(p, 'season'))
-      .sort((a, b) => getIPOuts(b) - getIPOuts(a));
-
 
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
@@ -2211,8 +2190,8 @@ const confirmEndGame = () => {
               <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3"><BarChart3 size={28} className="text-gray-800" /> 타자 TOP 5</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <RankTable title="타율" data={battersByAvg} getValue={p => p.avg} valueLabel="AVG" />
-                <RankTable title="안타" data={battersByHits} getValue={p => `${getH(p)}개`} valueLabel="H" />
-                <RankTable title="출루" data={battersByOnBase} getValue={p => `${getOnBase(p)}회`} valueLabel="OB" />
+                <RankTable title="홈런" data={battersByHR} getValue={p => `${p.homeRuns}개`} valueLabel="HR" />
+                <RankTable title="타점" data={battersByRBI} getValue={p => `${p.rbi}점`} valueLabel="RBI" />
               </div>
             </div>
 
@@ -2220,7 +2199,7 @@ const confirmEndGame = () => {
               <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3"><BarChart3 size={28} className="text-gray-800" /> 투수 TOP 5</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <RankTable title="평균자책점" data={pitchersByERA} getValue={p => p.era} valueLabel="ERA" />
-                <RankTable title="이닝" data={pitchersByInnings} getValue={p => outsToBaseballInnings(getIPOuts(p))} valueLabel="IP" />
+                <RankTable title="다승" data={pitchersByWins} getValue={p => `${p.wins}승`} valueLabel="W" />
                 <RankTable title="탈삼진" data={pitchersByK} getValue={p => `${p.strikeouts}K`} valueLabel="SO" />
               </div>
             </div>
