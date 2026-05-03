@@ -1474,6 +1474,75 @@ export default function App() {
   const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
     if (!finishedState || !user) return;
 
+    const getCurrentBattingTeamKey = () => (gameState?.half === 'top' ? 'teamA' : 'teamB');
+
+    const getCurrentOffensePlayers = () => {
+      if (!gameState) return [];
+    const battingTeamKey = getCurrentBattingTeamKey();
+     return gameState[battingTeamKey]?.lineup || [];
+};
+
+const handleManualBaseAssign = (baseIndex) => {
+  if (!gameState) return;
+  const allBasesEmpty = gameState.bases.every(b => b === null);
+  const isFirstBase = baseIndex === 0;
+  const isStartLikeState = allBasesEmpty && gameState.outs === 0;
+
+  if (gameState.bases[baseIndex]) {
+    setManualBaseAssign(null);
+    setRunnerActionBase(baseIndex);
+    return;
+  }
+  if (isFirstBase && isStartLikeState) {
+    setRunnerActionBase(null);
+    setManualBaseAssign(0);
+  }
+};
+
+const assignRunnerToBase = (playerName) => {
+  executeWithHistory(() => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const newBases = [...prev.bases];
+      const defenseTeam = prev.half === 'top' ? 'teamB' : 'teamA';
+      newBases[0] = { name: playerName, respPitcher: prev[defenseTeam].pitcher.id, isEarned: false };
+      const isTop = prev.half === 'top';
+      return {
+        ...prev,
+        bases: newBases,
+        logs: [`[${prev.inning}회${isTop ? '초' : '말'}] 수동 주자 배치 - ${playerName} 1루 배치`, ...prev.logs]
+      };
+    });
+  });
+  setManualBaseAssign(null);
+};
+
+const downloadLineupCard = () => {
+  if (!gameState) return;
+  const polarisKey = gameState.venue === 'home' ? 'teamB' : 'teamA';
+  const team = gameState[polarisKey];
+  const pitcher = players.find(p => String(p.id) === String(team.pitcherId));
+  
+  let text = `폴라리스 라인업카드\n`;
+  text += `상대: ${gameState.opponentName} / ${gameState.venue === 'home' ? '홈' : '원정'}\n`;
+  text += `날짜: ${new Date().toLocaleDateString('ko-KR')}\n\n`;
+  text += `[선발 투수] ${pitcher ? `${pitcher.name} (No.${pitcher.uniformNumber})` : '미정'}\n\n`;
+  text += `[타순]\n`;
+  team.lineup.forEach((slot, i) => {
+    const p = players.find(pl => String(pl.id) === String(slot.playerId));
+    if (p) text += `${i + 1}. ${p.name} (No.${p.uniformNumber}) - ${slot.assignedPosition || p.position}\n`;
+  });
+
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lineup_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+
     const polarisTeamKey = finishedState.mode === 'regular_play'
       ? (finishedState.venue === 'home' ? 'teamB' : 'teamA')
       : null;
@@ -1519,6 +1588,8 @@ export default function App() {
          await setDoc(doc(db, 'polaris_players', player.id.toString()), updated);
       }
     }
+
+
 
     const isRegular = finishedState.mode === 'regular_play';
     const opponentName = isRegular ? (finishedState.opponentName?.trim() || '상대팀') : '자체 청백전';
@@ -1607,6 +1678,76 @@ export default function App() {
     setShowEndGameModal(false);
     setEndGameMvp('');
   };
+
+  const getCurrentBattingTeamKey = () => (gameState?.half === 'top' ? 'teamA' : 'teamB');
+
+  const getCurrentOffensePlayers = () => {
+    if (!gameState) return [];
+    const battingTeamKey = getCurrentBattingTeamKey();
+    return gameState[battingTeamKey]?.lineup || [];
+  };
+
+  const handleManualBaseAssign = (baseIndex) => {
+    if (!gameState) return;
+    const allBasesEmpty = gameState.bases.every(b => b === null);
+    const isFirstBase = baseIndex === 0;
+    const isStartLikeState = allBasesEmpty && gameState.outs === 0;
+
+    if (gameState.bases[baseIndex]) {
+      setManualBaseAssign(null);
+      setRunnerActionBase(baseIndex);
+      return;
+    }
+    if (isFirstBase && isStartLikeState) {
+      setRunnerActionBase(null);
+      setManualBaseAssign(0);
+    }
+  };
+
+  const assignRunnerToBase = (playerName) => {
+    executeWithHistory(() => {
+      setGameState(prev => {
+        if (!prev) return prev;
+        const newBases = [...prev.bases];
+        const defenseTeam = prev.half === 'top' ? 'teamB' : 'teamA';
+        newBases[0] = { name: playerName, respPitcher: prev[defenseTeam].pitcher.id, isEarned: false };
+        const isTop = prev.half === 'top';
+        return {
+          ...prev,
+          bases: newBases,
+          logs: [`[${prev.inning}회${isTop ? '초' : '말'}] 수동 주자 배치 - ${playerName} 1루 배치`, ...prev.logs]
+        };
+      });
+    });
+    setManualBaseAssign(null);
+  };
+
+  const downloadLineupCard = () => {
+    if (!gameState) return;
+    const polarisKey = gameState.venue === 'home' ? 'teamB' : 'teamA';
+    const team = gameState[polarisKey];
+    const pitcher = players.find(p => String(p.id) === String(team.pitcherId));
+
+    let text = `폴라리스 라인업카드\n`;
+    text += `상대: ${gameState.opponentName} / ${gameState.venue === 'home' ? '홈' : '원정'}\n`;
+    text += `날짜: ${new Date().toLocaleDateString('ko-KR')}\n\n`;
+    text += `[선발 투수] ${pitcher ? `${pitcher.name} (No.${pitcher.uniformNumber})` : '미정'}\n\n`;
+    text += `[타순]\n`;
+    team.lineup.forEach((slot, i) => {
+      const p = players.find(pl => String(pl.id) === String(slot.playerId));
+      if (p) text += `${i + 1}. ${p.name} (No.${p.uniformNumber}) - ${slot.assignedPosition || p.position}\n`;
+    });
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lineup_${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+
 
   const handleGalleryUpload = async (e) => {
     const files = Array.from(e.target.files || []);
