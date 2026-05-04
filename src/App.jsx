@@ -300,6 +300,7 @@ export default function App() {
   const [changingPitcherTeam, setChangingPitcherTeam] = useState(null);
   const [showEndGameModal, setShowEndGameModal] = useState(false);
   const [endGameMvp, setEndGameMvp] = useState('');
+  const [pendingHit, setPendingHit] = useState(null);
 
   // Firebase Auth 초기화
   useEffect(() => {
@@ -1250,7 +1251,34 @@ const allPlayers = useMemo(() => players, [players]);
     return nextState;
   };
 
-  const handleGameAction = (actionLabel, isOut, basesToAdvance) => {
+  const getRunnerAdvanceOptions = (runnerBase, basesToAdvance) => {
+    const options = [];
+    options.push({ value: runnerBase + 1, label: `${runnerBase + 1}루 (잔류)` });
+    for (let dest = runnerBase + 2; dest <= 3; dest++) {
+      options.push({ value: dest, label: `${dest}루로 진루` });
+    }
+    options.push({ value: 4, label: '홈인 (득점)' });
+    options.push({ value: 0, label: '아웃 (주루사)' });
+    return options;
+  };
+
+  const handleGameAction = (actionLabel, isOut, basesToAdvance, runnerChoices = null) => {
+    const isHit = ['안타', '2루타', '3루타'].includes(actionLabel);
+    const hasRunners = gameState && gameState.bases.some(b => b !== null);
+
+    if (isHit && hasRunners && !runnerChoices) {
+      const runners = gameState.bases
+        .map((r, i) => r ? {
+          base: i,
+          name: r.name,
+          runnerObj: r,
+          choice: Math.min(i + 1 + basesToAdvance, 4)
+        } : null)
+        .filter(Boolean);
+      setPendingHit({ actionLabel, basesToAdvance, runners });
+      return;
+    }
+
     executeWithHistory(() => {
       setGameState(prev => {
         let state = normalizeGameStateForTracking(prev);
@@ -1378,17 +1406,42 @@ const allPlayers = useMemo(() => players, [players]);
             if (actionLabel === '볼넷' || actionLabel === '사구') pitchingDelta.walksAllowed += 1;
              if (isDroppedThirdStrike) pitchingDelta.strikeouts += 1;
           } else {
-            runnersOn.forEach(({ runnerObj, base }) => {
-              const nextBase = base + basesToAdvance;
-              if (nextBase > 3) processRunnerScoring(runnerObj);
-              else newBases[nextBase - 1] = runnerObj;
-            });
+            if (runnerChoices && runnerChoices.length > 0) {
+              // 사용자가 직접 선택한 주자 결과 적용
+              runnerChoices.forEach((rc) => {
+                const choice = Number(rc.choice);
+                if (choice === 0) {
+                  // 주루사
+                  newOuts += 1;
+                  pitchingDelta.inningsOuts += 1;
+                  newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${rc.name} 주루사 (아웃)`);
+                  newPlayEvents.unshift(`${rc.name} 주루사`);
+                } else if (choice >= 4) {
+                  // 홈인 (득점)
+                  processRunnerScoring(rc.runnerObj);
+                } else {
+                  // 베이스 진루 (1/2/3루)
+                  newBases[choice - 1] = rc.runnerObj;
+                }
+              });
+            } else {
+              // 주자 없거나 자동 처리 (fallback)
+              runnersOn.forEach(({ runnerObj, base }) => {
+                const nextBase = base + basesToAdvance;
+                if (nextBase > 3) processRunnerScoring(runnerObj);
+                else newBases[nextBase - 1] = runnerObj;
+              });
+            }
 
             if (basesToAdvance > 3) {
               runsScored++;
               runsToPitchers.push({ pitcherId: currentPitcher.id, earned: true });
               plateUpdates.runs = 1;
             } else {
+              // 타자가 갈 베이스에 주자가 있으면 덮어쓰기 전에 경고용 log
+              if (newBases[basesToAdvance - 1]) {
+                newLogs.unshift(`[경고] ${basesToAdvance}루 주자 충돌 - 주자 선택을 다시 확인하세요.`);
+              }
               newBases[basesToAdvance - 1] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
             }
             if (countAsHit) pitchingDelta.hitsAllowed += 1;
@@ -3444,6 +3497,66 @@ const confirmEndGame = () => {
               ))}
             </div>
             <button onClick={() => setManualBaseAssign(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors mt-4">취소</button>
+          </div>
+        </div>
+      )}
+
+      {pendingHit && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setPendingHit(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-black text-gray-800 mb-1">{pendingHit.actionLabel} - 주자 처리</h3>
+            <p className="text-sm text-gray-500 mb-5">각 주자의 결과를 선택해주세요.</p>
+            <div className="space-y-3">
+              {pendingHit.runners.map((r, idx) => {
+                const options = getRunnerAdvanceOptions(r.base, pendingHit.basesToAdvance);
+                return (
+                  <div key={`pending-runner-${idx}`} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                    <div className="font-bold text-gray-800 mb-2">
+                      <span className="inline-block bg-yellow-400 text-black text-xs font-black px-2 py-0.5 rounded mr-2">
+                        {r.base + 1}B
+                      </span>
+                      {r.name}
+                    </div>
+                    <select
+                      value={r.choice}
+                      onChange={(e) => {
+                        const newRunners = [...pendingHit.runners];
+                        newRunners[idx] = { ...newRunners[idx], choice: Number(e.target.value) };
+                        setPendingHit({ ...pendingHit, runners: newRunners });
+                      }}
+                      className="w-full p-2.5 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white font-medium"
+                    >
+                      {options.map(opt => (
+                        <option key={`opt-${idx}-${opt.value}`} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 mt-4 text-xs text-blue-700">
+              💡 타자는 자동으로 {pendingHit.basesToAdvance === 1 ? '1루' : pendingHit.basesToAdvance === 2 ? '2루' : '3루'}로 진루합니다.
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setPendingHit(null)}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  const choices = pendingHit.runners;
+                  const action = pendingHit.actionLabel;
+                  const bta = pendingHit.basesToAdvance;
+                  setPendingHit(null);
+                  handleGameAction(action, false, bta, choices);
+                }}
+                className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors"
+              >
+                확인
+              </button>
+            </div>
           </div>
         </div>
       )}
