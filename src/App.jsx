@@ -1268,6 +1268,11 @@ const allPlayers = useMemo(() => players, [players]);
         let runsScored = 0;
         let runsToPitchers = [];
 
+        const isErrorPlay = actionLabel.startsWith('실책-');
+        const isFielderChoice = actionLabel === '야수선택';
+        const isDoublePlay = actionLabel === '병살타';
+        const isDroppedThirdStrike = actionLabel === '낫아웃 출루';
+
         let countAsAtBat = !['볼넷', '사구', '희생번트', '희생플라이'].includes(actionLabel);
         let countAsHit = ['안타', '2루타', '3루타', '홈런'].includes(actionLabel);
         let plateUpdates = {
@@ -1280,11 +1285,6 @@ const allPlayers = useMemo(() => players, [players]);
           rbi: 0, runs: 0, steals: 0, errors: 0
         };
         let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
-
-        const isErrorPlay = actionLabel.startsWith('실책-');
-        const isFielderChoice = actionLabel === '야수선택';
-        const isDoublePlay = actionLabel === '병살타';
-         const isDroppedThirdStrike = actionLabel === '낫아웃 출루';
 
         const processRunnerScoring = (runnerObj) => {
           runsScored++;
