@@ -52,6 +52,20 @@ function calculateEra(earnedRuns, inningsOrOuts) {
   return ((earnedRuns * 9) / ip).toFixed(2);
 }
 
+function calculateFip(stats, leagueEra = 3.10) {
+  const outs = parseBaseballInningsToOuts(stats?.innings || 0);
+  const ip = outs / 3;
+  if (ip <= 0) return '0.00';
+  const hr = Number(stats?.homeRunsAllowed || 0);
+  const bb = Number(stats?.walksAllowed || 0);
+  const hbp = Number(stats?.hitByPitch || 0);
+  const wp = Number(stats?.wildPitches || 0);
+  const k = Number(stats?.strikeouts || 0);
+  const C = Number(leagueEra) > 0 ? Number(leagueEra) : 3.10;
+  const fip = (13 * hr + 3 * (bb + hbp) + 2 * wp - 2 * k) / ip + C;
+  return fip.toFixed(2);
+}
+
 // FHD 해상도로 제한하는 고화질 이미지 리사이징 함수
 const resizeImage = (file, maxWidth = 1920, maxHeight = 1920) => {
   return new Promise((resolve, reject) => {
@@ -301,6 +315,8 @@ export default function App() {
   const [showEndGameModal, setShowEndGameModal] = useState(false);
   const [endGameMvp, setEndGameMvp] = useState('');
   const [pendingHit, setPendingHit] = useState(null);
+  const [lineupChangeTeam, setLineupChangeTeam] = useState(null);
+  const [lineupDraft, setLineupDraft] = useState([]);
 
   // Firebase Auth 초기화
   useEffect(() => {
@@ -404,6 +420,21 @@ export default function App() {
     };
   }, [isSettingsLoaded, customBackground]);
 const allPlayers = useMemo(() => players, [players]);
+
+  // 폴라리스 팀 전체 평균 ERA = FIP 상수로 사용
+  const teamAvgEra = useMemo(() => {
+    let totalEr = 0;
+    let totalOuts = 0;
+    players.forEach((p) => {
+      if (p?.pitching) {
+        totalEr += Number(p.pitching.earnedRuns || 0);
+        totalOuts += parseBaseballInningsToOuts(p.pitching.innings || 0);
+      }
+    });
+    if (totalOuts <= 0) return 3.10;
+    const era = (totalEr * 9) / (totalOuts / 3);
+    return Number(era.toFixed(2));
+  }, [players]);
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -575,7 +606,15 @@ const allPlayers = useMemo(() => players, [players]);
             hitsAllowed: parseInt(careerForm.p_hitsAllowed) || 0,
             walksAllowed: parseInt(careerForm.p_walksAllowed) || 0,
             battersFaced: parseInt(careerForm.p_battersFaced) || 0,
-            era: p_era
+            era: p_era,
+            fip: calculateFip({
+              innings: p_ip,
+              homeRunsAllowed: parseInt(careerForm.p_homeRunsAllowed) || 0,
+              walksAllowed: parseInt(careerForm.p_walksAllowed) || 0,
+              hitByPitch: parseInt(careerForm.p_hitByPitch) || 0,
+              wildPitches: parseInt(careerForm.p_wildPitches) || 0,
+              strikeouts: parseInt(careerForm.p_strikeouts) || 0
+            }, teamAvgEra)
           }
         }
       };
@@ -1262,6 +1301,92 @@ const allPlayers = useMemo(() => players, [players]);
     return options;
   };
 
+  const openLineupChange = (teamKey) => {
+    if (!gameState || !gameState[teamKey]) return;
+    const draft = (gameState[teamKey].lineup || []).map((p) => ({
+      currentId: p.id,
+      newPlayerId: String(p.id),
+      assignedPosition: p.assignedPosition || p.position || ''
+    }));
+    setLineupDraft(draft);
+    setLineupChangeTeam(teamKey);
+  };
+
+  const updateLineupDraft = (idx, field, value) => {
+    setLineupDraft((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      return next;
+    });
+  };
+
+  const saveLineupChange = () => {
+    if (!lineupChangeTeam) return;
+    executeWithHistory(() => {
+      setGameState((prev) => {
+        const state = normalizeGameStateForTracking(prev);
+        const oldLineup = state[lineupChangeTeam].lineup;
+        const subbedOut = [...(state[lineupChangeTeam].substitutedOut || [])];
+        const newLogs = [...state.logs];
+        const isTop = state.half === 'top';
+
+        const newLineup = lineupDraft.map((slot, idx) => {
+          const oldSlot = oldLineup[idx];
+          const oldId = oldSlot ? String(oldSlot.id) : '';
+          const newId = String(slot.newPlayerId);
+
+          if (oldId === newId) {
+            return { ...oldSlot, assignedPosition: slot.assignedPosition || oldSlot.assignedPosition };
+          }
+
+          const newPlayer = players.find((p) => String(p.id) === newId);
+          if (!newPlayer) return oldSlot;
+
+          if (oldSlot) {
+            subbedOut.push({
+              ...oldSlot,
+              exitInning: state.inning,
+              exitHalf: state.half
+            });
+            newLogs.unshift(
+              `[${state.inning}회${isTop ? '초' : '말'}] [야수교체] ${state[lineupChangeTeam].name}: ${oldSlot.name} → ${newPlayer.name} (${slot.assignedPosition || newPlayer.position})`
+            );
+          }
+
+          return {
+            ...newPlayer,
+            assignedPosition: slot.assignedPosition || newPlayer.position || '미정',
+            gameStats: {
+              pa: 0, atBats: 0, hits: 0, singles: 0, doubles: 0, triples: 0,
+              homeRuns: 0, rbi: 0, runs: 0, walks: 0, strikeouts: 0,
+              steals: 0, sacrifices: 0, sacFlies: 0, sacBunts: 0,
+              errors: 0, resultByInning: {}
+            },
+            defensiveErrors: 0
+          };
+        });
+
+        let nextBatterIndex = state[lineupChangeTeam].batterIndex || 0;
+        if (newLineup.length > 0) {
+          nextBatterIndex = nextBatterIndex % newLineup.length;
+        }
+
+        return {
+          ...state,
+          logs: newLogs,
+          [lineupChangeTeam]: {
+            ...state[lineupChangeTeam],
+            lineup: newLineup,
+            batterIndex: nextBatterIndex,
+            substitutedOut: subbedOut
+          }
+        };
+      });
+    });
+    setLineupChangeTeam(null);
+    setLineupDraft([]);
+  };
+
   const handleGameAction = (actionLabel, isOut, basesToAdvance, runnerChoices = null) => {
     const isHit = ['안타', '2루타', '3루타'].includes(actionLabel);
     const hasRunners = gameState && gameState.bases.some(b => b !== null);
@@ -1574,11 +1699,11 @@ const allPlayers = useMemo(() => players, [players]);
     avg: calculateBattingAverage((player.hits || 0) + gameStats.hits, (player.atBats || 0) + gameStats.atBats)
   });
 
-  const updatePitcherSeasonStats = (pitcher, gameStats, isWinningPitcher, isLosingPitcher) => {
+  const updatePitcherSeasonStats = (pitcher, gameStats, isWinningPitcher, isLosingPitcher, teamAvgEra = 3.10) => {
     const nextOuts = parseBaseballInningsToOuts(pitcher.innings || 0) + (gameStats.inningsOuts || 0);
     const nextInnings = outsToBaseballInnings(nextOuts);
     const nextEarnedRuns = (pitcher.earnedRuns || 0) + gameStats.earnedRuns;
-    return {
+    const nextStats = {
       ...pitcher,
       games: (pitcher.games || 0) + 1,
       wins: (pitcher.wins || 0) + (isWinningPitcher ? 1 : 0),
@@ -1592,6 +1717,8 @@ const allPlayers = useMemo(() => players, [players]);
       battersFaced: (pitcher.battersFaced || 0) + gameStats.battersFaced,
       era: calculateEra(nextEarnedRuns, nextOuts)
     };
+    nextStats.fip = calculateFip(nextStats, teamAvgEra);
+    return nextStats;
   };
 
   
@@ -1646,7 +1773,11 @@ const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
       if (!shouldApplySeason(teamKey)) continue;
 
       const lineup = finishedState?.[teamKey]?.lineup || [];
-      const foundBatter = lineup.find((lp) => String(lp.id) === String(player.id));
+      const subbedOut = finishedState?.[teamKey]?.substitutedOut || [];
+
+      // 교체된 선수도 포함
+      const allBatters = [...lineup, ...subbedOut];
+      const foundBatter = allBatters.find((lp) => String(lp.id) === String(player.id));
 
       if (foundBatter?.gameStats) {
         next.batting = updateBatterSeasonStats(next.batting, foundBatter.gameStats);
@@ -1668,14 +1799,16 @@ const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
           next.pitching,
           app.stats || {},
           isWinningPitcher,
-          isLosingPitcher
+          isLosingPitcher,
+          teamAvgEra
         );
 
         next.yearlyStats[gameYear].pitching = updatePitcherSeasonStats(
           next.yearlyStats[gameYear].pitching,
           app.stats || {},
           isWinningPitcher,
-          isLosingPitcher
+          isLosingPitcher,
+          teamAvgEra
         );
 
         changed = true;
@@ -1720,15 +1853,26 @@ const finalizeAndPersistGameStats = async (finishedState, mvpId) => {
     opponentName,
     venue: finishedState.venue,
     playEvents: finishedState.playEvents || [],
-    lineup: (finishedState?.[viewTeamKey]?.lineup || []).map((pl, index) => ({
-      id: pl.id,
-      order: index + 1,
-      position: pl.assignedPosition || pl.position || '미정',
-      name: pl.name,
-      uniformNumber: pl.uniformNumber,
-      ...(pl.gameStats || {}),
-      seasonAvg: pl.avg || '0.000'
-    })),
+    lineup: [
+      ...(finishedState?.[viewTeamKey]?.lineup || []).map((pl, index) => ({
+        id: pl.id,
+        order: index + 1,
+        position: pl.assignedPosition || pl.position || '미정',
+        name: pl.name,
+        uniformNumber: pl.uniformNumber,
+        ...(pl.gameStats || {}),
+        seasonAvg: pl.avg || '0.000'
+      })),
+      ...(finishedState?.[viewTeamKey]?.substitutedOut || []).map((pl) => ({
+        id: pl.id,
+        order: '교체',
+        position: (pl.assignedPosition || pl.position || '미정') + ' (OUT)',
+        name: pl.name,
+        uniformNumber: pl.uniformNumber,
+        ...(pl.gameStats || {}),
+        seasonAvg: pl.avg || '0.000'
+      }))
+    ],
     pitcher: {
       name: polarisPitcher?.name || '',
       uniformNumber: polarisPitcher?.uniformNumber || '',
@@ -1923,7 +2067,7 @@ const confirmEndGame = () => {
     };
   };
 
-  const getPitcherStats = (p, type) => {
+  const getPitcherStats = (p, type, teamAvgEra = 3.10) => {
     let statsData = p.pitching || {};
     if (type === 'career') statsData = p.pitching?.career || {};
     else if (type === 'season' && recordYear !== 'all') {
@@ -1936,7 +2080,8 @@ const confirmEndGame = () => {
     const whip = ip > 0 ? ((stats.hitsAllowed || 0) + (stats.walksAllowed || 0)) / ip : 0;
     return {
       ...stats, id: p.id, name: String(p.name || ''), uniformNumber: p.uniformNumber,
-      whip: String(whip.toFixed(2)), era: String(calculateEra(stats.earnedRuns || 0, outs))
+      whip: String(whip.toFixed(2)), era: String(calculateEra(stats.earnedRuns || 0, outs)),
+      fip: String(calculateFip(stats, teamAvgEra))
     };
   };
 
@@ -2151,7 +2296,7 @@ const confirmEndGame = () => {
 
     const pitcherDataList = players
       .filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0)
-      .map(p => getPitcherStats(p, recordType))
+      .map(p => getPitcherStats(p, recordType, teamAvgEra))
       .sort((a, b) => {
         const valA = parseFloat(a[pitcherSort.key]) || 0;
         const valB = parseFloat(b[pitcherSort.key]) || 0;
@@ -2161,9 +2306,9 @@ const confirmEndGame = () => {
     const battersByAvg = [...players].filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0).map(b => getBatterStats(b, 'season')).sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg));
     const battersByHR = [...players].filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0).map(b => getBatterStats(b, 'season')).sort((a, b) => b.homeRuns - a.homeRuns);
     const battersByRBI = [...players].filter(p => p.primaryRole === '타자' || p.primaryRole === '투타겸업' || p.batting?.atBats > 0).map(b => getBatterStats(b, 'season')).sort((a, b) => b.rbi - a.rbi);
-    const pitchersByERA = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
-    const pitchersByWins = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => b.wins - a.wins);
-    const pitchersByK = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season')).sort((a, b) => b.strikeouts - a.strikeouts);
+    const pitchersByERA = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season', teamAvgEra)).sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
+    const pitchersByWins = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season', teamAvgEra)).sort((a, b) => b.wins - a.wins);
+    const pitchersByK = [...players].filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0).map(p => getPitcherStats(p, 'season', teamAvgEra)).sort((a, b) => b.strikeouts - a.strikeouts);
     /* RECORD_RANK_PATCH_V1 */
     const getH = (p) => Number(p?.stats?.hits ?? p?.hits ?? 0);
     const getBB = (p) => Number(p?.stats?.walks ?? p?.walks ?? 0);
@@ -2182,7 +2327,7 @@ const confirmEndGame = () => {
 
     const pitchersByInnings = [...players]
       .filter(p => p.primaryRole === '투수' || p.primaryRole === '투타겸업' || parseBaseballInningsToOuts(p.pitching?.innings) > 0)
-      .map(p => getPitcherStats(p, 'season'))
+      .map(p => getPitcherStats(p, 'season', teamAvgEra))
       .sort((a, b) => getIPOuts(b) - getIPOuts(a));
 
 
@@ -2339,16 +2484,19 @@ const confirmEndGame = () => {
 
             {/* 투수 테이블 */}
             <div>
-              <h2 className="text-2xl font-black text-gray-800 mb-4 flex items-center gap-3">
+              <h2 className="text-2xl font-black text-gray-800 mb-4 flex items-center gap-3 flex-wrap">
                 <BarChart3 size={28} className="text-gray-800" /> 투수 기록 ({recordType === 'season' ? seasonLabel : '통산'})
+                <span className="text-xs font-bold bg-amber-100 text-amber-800 px-3 py-1 rounded-full">
+                  🎯 팀 평균 ERA(FIP 상수): {teamAvgEra.toFixed(2)}
+                </span>
               </h2>
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm text-center whitespace-nowrap">
                   <thead className="bg-gray-100 border-b border-gray-200 text-gray-700">
                     <tr>
                       <th className="p-3 text-left w-32 sticky left-0 bg-gray-100 z-10 shadow-[1px_0_0_0_#e5e7eb]">이름</th>
-                      {['games', 'wins', 'losses', 'saves', 'innings', 'hitsAllowed', 'walksAllowed', 'strikeouts', 'runsAllowed', 'earnedRuns', 'era', 'whip'].map(key => {
-                        const labels = { games: 'G', wins: 'W', losses: 'L', saves: 'SV', innings: 'IP', hitsAllowed: 'H', walksAllowed: 'BB', strikeouts: 'SO', runsAllowed: 'R', earnedRuns: 'ER', era: 'ERA', whip: 'WHIP' };
+                      {['games', 'wins', 'losses', 'saves', 'innings', 'hitsAllowed', 'walksAllowed', 'strikeouts', 'runsAllowed', 'earnedRuns', 'era', 'whip', 'fip'].map(key => {
+                        const labels = { games: 'G', wins: 'W', losses: 'L', saves: 'SV', innings: 'IP', hitsAllowed: 'H', walksAllowed: 'BB', strikeouts: 'SO', runsAllowed: 'R', earnedRuns: 'ER', era: 'ERA', whip: 'WHIP', fip: '*FIP' };
                         return (
                           <th key={`pitcher-th-${key}`} className="p-3 cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handlePitcherSort(key)}>
                             {labels[key]} <SortIcon currentSortKey={pitcherSort.key} sortKey={key} currentDir={pitcherSort.dir} />
@@ -2846,6 +2994,7 @@ const confirmEndGame = () => {
                     <th className="p-4 font-semibold">이름</th>
                     <th className="p-4 font-semibold text-center">포지션</th>
                     <th className="p-4 font-semibold text-right">ERA</th>
+                    <th className="p-4 font-semibold text-right">*FIP</th>
                     <th className="p-4 font-semibold text-right">G</th>
                     <th className="p-4 font-semibold text-right">W</th>
                     <th className="p-4 font-semibold text-right">L</th>
@@ -2857,7 +3006,7 @@ const confirmEndGame = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-gray-800">
                   {players.filter(p => ['투수', '투타겸업'].includes(p.primaryRole)).map(p => {
-                    const stats = getPitcherStats(p, 'season');
+                    const stats = getPitcherStats(p, 'season', teamAvgEra);
                     return (
                       <tr key={`admin-pitcher-${p.id}`} className="hover:bg-gray-50 transition-colors">
                         <td className="p-4 font-bold text-gray-400 text-center">{stats.uniformNumber}</td>
@@ -2872,6 +3021,7 @@ const confirmEndGame = () => {
                           </select>
                         </td>
                         <td className="p-4 text-right font-semibold text-slate-800">{stats.era}</td>
+                        <td className="p-4 text-right font-semibold text-slate-800">{stats.fip}</td>
                         <td className="p-4 text-right">{stats.games}</td>
                         <td className="p-4 text-right">{stats.wins}</td>
                         <td className="p-4 text-right">{stats.losses}</td>
@@ -3048,10 +3198,18 @@ const confirmEndGame = () => {
                           <div className={`w-3 h-3 rounded-full ${gameState.outs >= 2 ? 'bg-red-500' : 'bg-slate-700'}`}></div>
                         </div>
                       </div>
-                      <div className="flex justify-center mt-3 gap-2">
-                        <button onClick={() => executeWithHistory(() => forceInningChange())} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-gray-300 text-xs px-2 py-1 rounded transition-colors"><FastForward size={12} /> 강제 교대</button>
-                        <button onClick={handleUndo} disabled={gameStateHistory.length === 0} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${gameStateHistory.length > 0 ? 'bg-amber-600/30 hover:bg-amber-600/60 border border-amber-600/50 text-amber-200' : 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'}`} title="직전 플레이 취소">
-                          <Undo size={12} /> 실행 취소
+                      <div className="flex flex-wrap justify-center gap-3 mt-3">
+                        <button onClick={() => executeWithHistory(() => forceInningChange())} className="flex items-center justify-center gap-2 min-w-[120px] bg-slate-800 hover:bg-slate-700 border border-slate-600 text-gray-200 text-sm font-semibold px-3 py-2 rounded-2xl transition-colors whitespace-nowrap leading-tight">
+                          <FastForward size={14} /> 강제 교대
+                        </button>
+                        <button onClick={handleUndo} disabled={gameStateHistory.length === 0} className={`flex items-center justify-center gap-2 min-w-[120px] text-sm font-semibold px-3 py-2 rounded-2xl transition-colors whitespace-nowrap leading-tight ${gameStateHistory.length > 0 ? 'bg-amber-600/25 hover:bg-amber-600/45 border border-amber-600/60 text-amber-100' : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'}`} title="직전 플레이 취소">
+                          <Undo size={14} /> 실행 취소
+                        </button>
+                        <button onClick={() => openLineupChange(gameState.half === 'top' ? 'teamB' : 'teamA')} className="flex items-center justify-center gap-2 min-w-[140px] bg-emerald-600/25 hover:bg-emerald-600/55 border border-emerald-600/60 text-emerald-100 text-sm font-semibold px-3 py-2 rounded-2xl transition-colors whitespace-nowrap leading-tight" title="수비측 야수 교체">
+                          <Users size={14} /> 야수 교체
+                        </button>
+                        <button onClick={() => openLineupChange(gameState.half === 'top' ? 'teamA' : 'teamB')} className="flex items-center justify-center gap-2 min-w-[140px] bg-blue-600/25 hover:bg-blue-600/55 border border-blue-600/60 text-blue-100 text-sm font-semibold px-3 py-2 rounded-2xl transition-colors whitespace-nowrap leading-tight" title="공격측 라인업 변경">
+                          <Users size={14} /> 라인업 변경
                         </button>
                       </div>
                     </div>
@@ -3195,7 +3353,11 @@ const confirmEndGame = () => {
     if (!selectedPlayer) return null;
 
     const battingStats = getBatterStats(selectedPlayer, 'season');
-    const pitchingStats = getPitcherStats(selectedPlayer, 'season');
+    const pitchingStats = getPitcherStats(selectedPlayer, 'season', teamAvgEra);
+    const careerBattingStats = getBatterStats(selectedPlayer, 'career');
+    const careerPitchingStats = getPitcherStats(selectedPlayer, 'career', teamAvgEra);
+    const careerBatting = selectedPlayer.batting?.career || {};
+    const careerPitching = selectedPlayer.pitching?.career || {};
 
     const chartData = selectedPlayer.primaryRole === '투수' ? [
       { label: 'ERA', value: Math.max(0, 100 - (parseFloat(pitchingStats.era || 0) * 10)), max: 100 },
@@ -3274,11 +3436,101 @@ const confirmEndGame = () => {
                 <div className="overflow-x-auto bg-gray-50/50 rounded-xl border border-gray-200">
                   <table className="w-full text-sm">
                     <thead className="text-gray-600 border-b border-gray-200">
-                      <tr><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">BB</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold">ER</th><th className="p-3 font-semibold text-gray-800">ERA</th><th className="p-3 font-semibold text-gray-800">WHIP</th></tr>
+                      <tr><th className="p-3 font-semibold">G</th><th className="p-3 font-semibold">W</th><th className="p-3 font-semibold">L</th><th className="p-3 font-semibold">SV</th><th className="p-3 font-semibold">IP</th><th className="p-3 font-semibold">H</th><th className="p-3 font-semibold">BB</th><th className="p-3 font-semibold">SO</th><th className="p-3 font-semibold">ER</th><th className="p-3 font-semibold text-gray-800">ERA</th><th className="p-3 font-semibold text-gray-800">WHIP</th><th className="p-3 font-semibold text-gray-800">*FIP</th></tr>
                     </thead>
                     <tbody className="text-gray-800 font-bold text-center">
                       <tr>
-                        <td className="p-3">{selectedPlayer.pitching?.games || 0}</td><td className="p-3">{selectedPlayer.pitching?.wins || 0}</td><td className="p-3">{selectedPlayer.pitching?.losses || 0}</td><td className="p-3">{selectedPlayer.pitching?.saves || 0}</td><td className="p-3">{selectedPlayer.pitching?.innings || 0}</td><td className="p-3">{selectedPlayer.pitching?.hitsAllowed || 0}</td><td className="p-3">{selectedPlayer.pitching?.walksAllowed || 0}</td><td className="p-3">{selectedPlayer.pitching?.strikeouts || 0}</td><td className="p-3">{selectedPlayer.pitching?.earnedRuns || 0}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.era)}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.whip)}</td>
+                        <td className="p-3">{selectedPlayer.pitching?.games || 0}</td><td className="p-3">{selectedPlayer.pitching?.wins || 0}</td><td className="p-3">{selectedPlayer.pitching?.losses || 0}</td><td className="p-3">{selectedPlayer.pitching?.saves || 0}</td><td className="p-3">{selectedPlayer.pitching?.innings || 0}</td><td className="p-3">{selectedPlayer.pitching?.hitsAllowed || 0}</td><td className="p-3">{selectedPlayer.pitching?.walksAllowed || 0}</td><td className="p-3">{selectedPlayer.pitching?.strikeouts || 0}</td><td className="p-3">{selectedPlayer.pitching?.earnedRuns || 0}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.era)}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.whip)}</td><td className="p-3 text-gray-900 text-lg">{String(pitchingStats.fip)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {['타자', '투타겸업'].includes(selectedPlayer.primaryRole) && (
+              <div>
+                <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="w-1 h-5 bg-amber-500 rounded"></span> 통산 타격 기록
+                </h3>
+                <div className="overflow-x-auto bg-amber-50/30 rounded-xl border border-amber-200">
+                  <table className="w-full text-sm">
+                    <thead className="text-gray-600 border-b border-amber-200">
+                      <tr>
+                        <th className="p-3 font-semibold">G</th>
+                        <th className="p-3 font-semibold">AB</th>
+                        <th className="p-3 font-semibold">R</th>
+                        <th className="p-3 font-semibold">H</th>
+                        <th className="p-3 font-semibold">2B</th>
+                        <th className="p-3 font-semibold">3B</th>
+                        <th className="p-3 font-semibold">HR</th>
+                        <th className="p-3 font-semibold">RBI</th>
+                        <th className="p-3 font-semibold">BB</th>
+                        <th className="p-3 font-semibold">SO</th>
+                        <th className="p-3 font-semibold">SB</th>
+                        <th className="p-3 font-semibold text-gray-800">AVG</th>
+                        <th className="p-3 font-semibold text-gray-800">OPS</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-800 font-bold text-center">
+                      <tr>
+                        <td className="p-3">{careerBatting.games || 0}</td>
+                        <td className="p-3">{careerBatting.atBats || 0}</td>
+                        <td className="p-3">{careerBatting.runs || 0}</td>
+                        <td className="p-3">{careerBatting.hits || 0}</td>
+                        <td className="p-3">{careerBatting.doubles || 0}</td>
+                        <td className="p-3">{careerBatting.triples || 0}</td>
+                        <td className="p-3">{careerBatting.homeRuns || 0}</td>
+                        <td className="p-3">{careerBatting.rbi || 0}</td>
+                        <td className="p-3">{careerBatting.walks || 0}</td>
+                        <td className="p-3">{careerBatting.strikeouts || 0}</td>
+                        <td className="p-3">{careerBatting.steals || 0}</td>
+                        <td className="p-3 text-amber-700 text-lg">{String(careerBattingStats.avg || '0.000')}</td>
+                        <td className="p-3 text-amber-700 text-lg">{String(careerBattingStats.ops || '0.000')}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {['투수', '투타겸업'].includes(selectedPlayer.primaryRole) && (
+              <div>
+                <h3 className="text-lg font-black text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="w-1 h-5 bg-amber-500 rounded"></span> 통산 투구 기록
+                </h3>
+                <div className="overflow-x-auto bg-amber-50/30 rounded-xl border border-amber-200">
+                  <table className="w-full text-sm">
+                    <thead className="text-gray-600 border-b border-amber-200">
+                      <tr>
+                        <th className="p-3 font-semibold">G</th>
+                        <th className="p-3 font-semibold">W</th>
+                        <th className="p-3 font-semibold">L</th>
+                        <th className="p-3 font-semibold">SV</th>
+                        <th className="p-3 font-semibold">IP</th>
+                        <th className="p-3 font-semibold">H</th>
+                        <th className="p-3 font-semibold">BB</th>
+                        <th className="p-3 font-semibold">SO</th>
+                        <th className="p-3 font-semibold">ER</th>
+                        <th className="p-3 font-semibold text-gray-800">ERA</th>
+                        <th className="p-3 font-semibold text-gray-800">WHIP</th>
+                        <th className="p-3 font-semibold text-gray-800">*FIP</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-800 font-bold text-center">
+                      <tr>
+                        <td className="p-3">{careerPitching.games || 0}</td>
+                        <td className="p-3">{careerPitching.wins || 0}</td>
+                        <td className="p-3">{careerPitching.losses || 0}</td>
+                        <td className="p-3">{careerPitching.saves || 0}</td>
+                        <td className="p-3">{careerPitching.innings || 0}</td>
+                        <td className="p-3">{careerPitching.hitsAllowed || 0}</td>
+                        <td className="p-3">{careerPitching.walksAllowed || 0}</td>
+                        <td className="p-3">{careerPitching.strikeouts || 0}</td>
+                        <td className="p-3">{careerPitching.earnedRuns || 0}</td>
+                        <td className="p-3 text-amber-700 text-lg">{String(careerPitchingStats.era || '0.00')}</td>
+                        <td className="p-3 text-amber-700 text-lg">{String(careerPitchingStats.whip || '0.00')}</td>
+                        <td className="p-3 text-amber-700 text-lg">{String(careerPitchingStats.fip || '0.00')}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -3497,6 +3749,89 @@ const confirmEndGame = () => {
               ))}
             </div>
             <button onClick={() => setManualBaseAssign(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors mt-4">취소</button>
+          </div>
+        </div>
+      )}
+
+      {lineupChangeTeam && gameState && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[85] p-4" onClick={() => { setLineupChangeTeam(null); setLineupDraft([]); }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
+              <div>
+                <h3 className="text-xl font-black text-gray-800">라인업 / 야수 교체</h3>
+                <p className="text-sm text-gray-500 mt-1">{gameState[lineupChangeTeam]?.name}</p>
+              </div>
+              <button onClick={() => { setLineupChangeTeam(null); setLineupDraft([]); }} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-6">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-xs text-amber-800">
+                ⚾ 선수를 변경하면 새 선수의 게임 기록은 0부터 시작하며, 교체되어 나간 선수의 기록은 보존됩니다.
+              </div>
+              <div className="overflow-x-auto bg-gray-50 rounded-xl border border-gray-200">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-gray-100 text-gray-600 font-semibold border-b border-gray-200">
+                    <tr>
+                      <th className="p-3 text-center w-20">타순</th>
+                      <th className="p-3">선수</th>
+                      <th className="p-3 w-40">수비 위치</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {lineupDraft.map((slot, idx) => {
+                      const orig = gameState[lineupChangeTeam].lineup[idx];
+                      const changed = orig && String(orig.id) !== String(slot.newPlayerId);
+                      return (
+                        <tr key={`lc-row-${idx}`} className={changed ? 'bg-amber-50' : 'hover:bg-white'}>
+                          <td className="p-3 text-center font-bold text-gray-700">{idx + 1}번</td>
+                          <td className="p-3">
+                            <select
+                              className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white"
+                              value={slot.newPlayerId}
+                              onChange={(e) => updateLineupDraft(idx, 'newPlayerId', e.target.value)}
+                            >
+                              {players.map((p) => (
+                                <option key={`lc-pl-${idx}-${p.id}`} value={p.id}>
+                                  {p.name} (No.{p.uniformNumber}) {p.primaryRole}
+                                </option>
+                              ))}
+                            </select>
+                            {changed && (
+                              <p className="text-[11px] text-amber-700 mt-1 font-semibold">
+                                ※ {orig?.name} → 교체 예정
+                              </p>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            <select
+                              className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white"
+                              value={slot.assignedPosition}
+                              onChange={(e) => updateLineupDraft(idx, 'assignedPosition', e.target.value)}
+                            >
+                              <option value="">포지션...</option>
+                              {POSITIONS.map((pos) => (
+                                <option key={`lc-pos-${idx}-${pos}`} value={pos}>{pos}</option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-6 border-t border-gray-100 bg-gray-50">
+              <button onClick={() => { setLineupChangeTeam(null); setLineupDraft([]); }} className="flex-1 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">
+                취소
+              </button>
+              <button onClick={saveLineupChange} className="flex-1 px-4 py-3 bg-slate-800 hover:bg-black text-white font-bold rounded-xl transition-colors">
+                교체 적용
+              </button>
+            </div>
           </div>
         </div>
       )}
