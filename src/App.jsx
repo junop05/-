@@ -2170,7 +2170,7 @@ const confirmEndGame = () => {
   const renderSchedule = () => (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-black text-gray-800 flex items-center gap-3"><Calendar size={32} /> 일정 관리 및 투표</h2>
+        <h2 className="text-2xl sm:text-3xl font-black text-gray-800 flex items-center gap-2 sm:gap-3"><Calendar size={32} className="w-6 h-6 sm:w-8 sm:h-8" /> 일정 관리 및 투표</h2>
         {isAdminAuth && (
           <button onClick={() => setShowScheduleModal(true)} className="bg-slate-800 hover:bg-black text-white px-5 py-2.5 rounded-lg font-bold flex items-center space-x-2 transition-colors shadow-md text-sm">
             <Plus size={18} /><span>새 일정 추가</span>
@@ -2180,7 +2180,7 @@ const confirmEndGame = () => {
 
       {schedules.length === 0 ? (
         <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-          <Calendar size={60} className="text-gray-300 mb-6" />
+          <Calendar size={60} className="w-12 h-12 sm:w-[60px] sm:h-[60px] text-gray-300 mb-6" />
           <h3 className="text-2xl font-bold text-gray-800 mb-2">등록된 일정이 없습니다.</h3>
           <p className="text-gray-500 font-medium">관리자 모드에서 새로운 훈련이나 경기를 추가해보세요.</p>
         </div>
@@ -2360,8 +2360,8 @@ const confirmEndGame = () => {
           <div className="space-y-10 animate-fade-in">
             {/* 경기 결과 내역 */}
             <div>
-              <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3">
-                <Trophy size={28} className="text-gray-800" /> {seasonLabel} 경기 결과
+              <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-6 flex items-center gap-2 sm:gap-3">
+                <Trophy size={28} className="w-6 h-6 sm:w-7 sm:h-7 text-gray-800" /> {seasonLabel} 경기 결과
               </h2>
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <table className="w-full text-left">
@@ -2418,7 +2418,7 @@ const confirmEndGame = () => {
 
             {/* 랭킹 뷰 */}
             <div>
-              <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3"><BarChart3 size={28} className="text-gray-800" /> 타자 TOP 5</h2>
+              <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-6 flex items-center gap-2 sm:gap-3"><BarChart3 size={28} className="w-6 h-6 sm:w-7 sm:h-7 text-gray-800" /> 타자 TOP 5</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <RankTable title="타율" data={battersByAvg} getValue={p => p.avg} valueLabel="AVG" />
                 <RankTable title="안타" data={battersByHits} getValue={p => `${getH(p)}개`} valueLabel="H" />
@@ -2427,7 +2427,7 @@ const confirmEndGame = () => {
             </div>
 
             <div>
-              <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-3"><BarChart3 size={28} className="text-gray-800" /> 투수 TOP 5</h2>
+              <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-6 flex items-center gap-2 sm:gap-3"><BarChart3 size={28} className="w-6 h-6 sm:w-7 sm:h-7 text-gray-800" /> 투수 TOP 5</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <RankTable title="평균자책점" data={pitchersByERA} getValue={p => p.era} valueLabel="ERA" />
                 <RankTable title="이닝" data={pitchersByInnings} getValue={p => outsToBaseballInnings(getIPOuts(p))} valueLabel="IP" />
@@ -2442,8 +2442,8 @@ const confirmEndGame = () => {
           <div className="space-y-10 animate-fade-in">
             {/* 타자 테이블 */}
             <div>
-              <h2 className="text-2xl font-black text-gray-800 mb-4 flex items-center gap-3">
-                <BarChart3 size={28} className="text-gray-800" /> 타자 기록 ({recordType === 'season' ? seasonLabel : '통산'})
+              <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-4 flex items-center gap-2 sm:gap-3">
+                <BarChart3 size={28} className="w-6 h-6 sm:w-7 sm:h-7 text-gray-800" /> 타자 기록 ({recordType === 'season' ? seasonLabel : '통산'})
               </h2>
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm text-center whitespace-nowrap">
@@ -2484,8 +2484,8 @@ const confirmEndGame = () => {
 
             {/* 투수 테이블 */}
             <div>
-              <h2 className="text-2xl font-black text-gray-800 mb-4 flex items-center gap-3 flex-wrap">
-                <BarChart3 size={28} className="text-gray-800" /> 투수 기록 ({recordType === 'season' ? seasonLabel : '통산'})
+              <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-4 flex items-center gap-2 sm:gap-3 flex-wrap">
+                <BarChart3 size={28} className="w-6 h-6 sm:w-7 sm:h-7 text-gray-800" /> 투수 기록 ({recordType === 'season' ? seasonLabel : '통산'})
                 <span className="text-xs font-bold bg-amber-100 text-amber-800 px-3 py-1 rounded-full">
                   🎯 팀 평균 ERA(FIP 상수): {teamAvgEra.toFixed(2)}
                 </span>
@@ -2570,8 +2570,8 @@ const confirmEndGame = () => {
               <div className="space-y-6">
                 {detail.mvpId && (
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-6 border border-amber-100 shadow-sm flex items-center gap-4">
-                    <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
-                      <Trophy size={32} className="text-amber-500" />
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
+                      <Trophy size={32} className="w-6 h-6 sm:w-8 sm:h-8 text-amber-500" />
                     </div>
                     <div>
                       <p className="text-sm font-bold text-amber-600 mb-1">MVP (Man of the Match)</p>
@@ -2706,7 +2706,7 @@ const confirmEndGame = () => {
         ))}
         {galleryPosts.length === 0 && (
           <div className="bg-white p-16 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-            <Camera size={80} className="text-gray-300 mb-6" />
+            <Camera size={80} className="w-14 h-14 sm:w-20 sm:h-20 text-gray-300 mb-6" />
             <h3 className="text-3xl font-black text-gray-800 mb-4">첫 단체 사진을 올려보세요</h3>
             <p className="text-gray-500 text-lg font-medium">사진을 업로드하여 팀의 추억을 공유해 보세요.</p>
           </div>
@@ -2774,8 +2774,8 @@ const confirmEndGame = () => {
       return (
         <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
           <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 max-w-md w-full text-center">
-            <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Lock size={32} className="text-blue-600" />
+            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Lock size={32} className="w-7 h-7 sm:w-8 sm:h-8 text-blue-600" />
             </div>
             <h2 className="text-2xl font-black text-gray-800 mb-2">관리자 권한 필요</h2>
             <p className="text-gray-500 mb-8">선수 관리 및 기록을 위해 비밀번호를 입력해주세요.</p>
@@ -3064,16 +3064,16 @@ const confirmEndGame = () => {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 min-h-[600px]">
             {!gameState ? (
               <div className="flex flex-col items-center justify-center h-full space-y-8 py-20">
-                <ClipboardList size={64} className="text-slate-800 mb-4" />
+                <ClipboardList size={64} className="w-12 h-12 sm:w-16 sm:h-16 text-slate-800 mb-4" />
                 <h2 className="text-3xl font-black text-gray-800">어떤 경기를 기록할까요?</h2>
                 <div className="flex flex-col sm:flex-row gap-6 w-full max-w-2xl">
                   <button onClick={startScrimmageSetup} className="flex-1 bg-slate-800 hover:bg-slate-900 text-white p-8 rounded-2xl transition-all shadow-md hover:shadow-lg flex flex-col items-center gap-4">
-                    <Users size={48} className="text-gray-300" />
+                    <Users size={48} className="w-10 h-10 sm:w-12 sm:h-12 text-gray-300" />
                     <span className="text-2xl font-bold">자체 청백전 모드</span>
                     <span className="text-gray-400 text-sm font-medium">팀 내 연습 경기용</span>
                   </button>
                   <button onClick={startRegularSetup} className="flex-1 bg-white border-2 border-gray-200 hover:border-slate-800 text-gray-800 p-8 rounded-2xl transition-all shadow-sm hover:shadow-md flex flex-col items-center gap-4 group">
-                    <Trophy size={48} className="text-gray-400 group-hover:text-slate-800 transition-colors" />
+                    <Trophy size={48} className="w-10 h-10 sm:w-12 sm:h-12 text-gray-400 group-hover:text-slate-800 transition-colors" />
                     <span className="text-2xl font-bold">정규 경기 모드</span>
                     <span className="text-gray-500 text-sm font-medium">외부 팀과의 공식 시합</span>
                   </button>
@@ -3315,7 +3315,7 @@ const confirmEndGame = () => {
                <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[90]">
                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
                    <div className="p-6 border-b border-gray-100 flex items-center justify-center bg-gray-50">
-                      <Award size={32} className="text-amber-500 mr-2" />
+                      <Award size={32} className="w-7 h-7 sm:w-8 sm:h-8 text-amber-500 mr-2" />
                       <h3 className="text-xl font-black text-gray-800">MOM 선정</h3>
                    </div>
                    <div className="p-6">
@@ -3378,7 +3378,7 @@ const confirmEndGame = () => {
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col relative" onClick={e => e.stopPropagation()}>
           <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-8 flex items-center gap-6 relative">
             <button onClick={() => setSelectedPlayer(null)} className="absolute top-4 right-4 text-white/70 hover:text-white">
-              <X size={28} />
+              <X size={28} className="w-6 h-6 sm:w-7 sm:h-7" />
             </button>
             <div className="w-28 h-28 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/30 backdrop-blur overflow-hidden shrink-0">
               {playerPhotos[getPlayerKey(selectedPlayer)] ? (
