@@ -319,6 +319,10 @@ export default function App() {
   // { actionLabel: '희생번트'|'희생플라이', runners: [...] }
   const [pendingGroundOut, setPendingGroundOut] = useState(null);
   // { actionLabel: '병살타'|'땅볼 아웃', runners: [...], totalOuts: number }
+  const [pendingFC, setPendingFC] = useState(null);
+  // { runners: [{ base, name, runnerObj, choice }] }  — 타자는 무조건 1루
+  const [pendingTagup, setPendingTagup] = useState(null);
+  // { runners: [{ base, name, runnerObj, choice }] }  — 타자는 아웃
   const [pitcherSwapAsk, setPitcherSwapAsk] = useState(null);
   // { teamKey, newPitcherId, dhSlotIndex }
   const [lineupChangeTeam, setLineupChangeTeam] = useState(null);
@@ -1690,6 +1694,200 @@ const allPlayers = useMemo(() => players, [players]);
         )
       }
     };
+  };
+
+  const handleFCAction = () => {
+    const hasRunners = gameState && gameState.bases.some(b => b !== null);
+    if (!hasRunners) {
+      handleGameAction('야수선택', false, 1);
+      return;
+    }
+    // 기본값: 선행 주자(가장 높은 베이스) 아웃, 나머지는 1베이스 진루
+    const runnersList = gameState.bases
+      .map((r, i) => r ? { base: i, name: r.name, runnerObj: r } : null)
+      .filter(Boolean);
+    const leadRunnerBase = runnersList[runnersList.length - 1].base;
+    const runners = runnersList.map(r => ({
+      ...r,
+      choice: r.base === leadRunnerBase ? 0 : Math.min(r.base + 2, 4)
+    }));
+    setPendingFC({ runners });
+  };
+
+  const executeFCResolution = (runnerChoices) => {
+    executeWithHistory(() => {
+      setGameState(prev => {
+        let state = normalizeGameStateForTracking(prev);
+        const isTop = state.half === 'top';
+        const battingTeam = isTop ? 'teamA' : 'teamB';
+        const defenseTeam = isTop ? 'teamB' : 'teamA';
+        const currentBatter = state[battingTeam].lineup[state[battingTeam].batterIndex];
+        const currentPitcher = state[defenseTeam].pitcher;
+
+        let newBases = [null, null, null];
+        let newOuts = state.outs;
+        let runsScored = 0;
+        let runsToPitchers = [];
+        let newLogs = [...state.logs];
+        let newPlayEvents = [...state.playEvents];
+        let pitchingDelta = { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0,
+          hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
+
+        runnerChoices.forEach(rc => {
+          const choice = Number(rc.choice);
+          if (choice === 0) {
+            newOuts += 1;
+            pitchingDelta.inningsOuts += 1;
+            newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${rc.name} 아웃 (야수선택)`);
+          } else if (choice >= 4) {
+            runsScored++;
+            runsToPitchers.push({ pitcherId: rc.runnerObj.respPitcher, earned: rc.runnerObj.isEarned });
+          } else {
+            newBases[choice - 1] = rc.runnerObj;
+          }
+        });
+
+        // 타자는 무조건 1루 (단, 1루가 이미 점유됐으면 덮어씀 — 사용자가 선택에서 비워야 함)
+        newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+
+        const plateUpdates = {
+          label: '야수선택', atBats: 1, hits: 0, homeRuns: 0, walks: 0,
+          strikeouts: 0, rbi: runsScored, runs: 0, steals: 0, errors: 0
+        };
+
+        runsToPitchers.forEach(r => {
+          state = addPitcherRuns(state, defenseTeam, r.pitcherId, 1, r.earned ? 1 : 0);
+        });
+
+        state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
+        state = applyPitchingEvent(state, defenseTeam, pitchingDelta);
+
+        let newBatterIndex = state[battingTeam].batterIndex;
+        if (state[battingTeam].lineup.length > 0)
+          newBatterIndex = (newBatterIndex + 1) % state[battingTeam].lineup.length;
+
+        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 야수선택 출루${runsScored > 0 ? ` (+${runsScored}득점)` : ''}`);
+        newPlayEvents.unshift(`${currentBatter?.name || '타자'} 야수선택`);
+
+        state = {
+          ...state,
+          outs: newOuts,
+          bases: newBases,
+          logs: newLogs,
+          playEvents: newPlayEvents,
+          [battingTeam]: {
+            ...state[battingTeam],
+            score: state[battingTeam].score + runsScored,
+            batterIndex: newBatterIndex
+          }
+        };
+        state = advanceInningScore(state, battingTeam, runsScored);
+
+        let newInning = state.inning, newHalf = state.half;
+        if (state.outs >= 3) {
+          newLogs.unshift(`[${newInning}회${isTop ? '초' : '말'} 종료] 쓰리아웃 공수교대`);
+          if (newHalf === 'top') newHalf = 'bottom';
+          else { newHalf = 'top'; newInning += 1; }
+          state = { ...state, inning: newInning, half: newHalf, outs: 0,
+                    bases: [null, null, null], logs: newLogs };
+        }
+        return state;
+      });
+    });
+  };
+
+  const handleFlyOutAction = () => {
+    const hasRunners = gameState && gameState.bases.some(b => b !== null);
+    if (!hasRunners) {
+      handleGameAction('플라이 아웃', true, 0);
+      return;
+    }
+    const runners = gameState.bases.map((r, i) => r ? {
+      base: i, name: r.name, runnerObj: r,
+      choice: i + 1  // 기본값: 잔류
+    } : null).filter(Boolean);
+    setPendingTagup({ runners });
+  };
+
+  const executeFlyOutWithTagup = (runnerChoices) => {
+    executeWithHistory(() => {
+      setGameState(prev => {
+        let state = normalizeGameStateForTracking(prev);
+        const isTop = state.half === 'top';
+        const battingTeam = isTop ? 'teamA' : 'teamB';
+        const defenseTeam = isTop ? 'teamB' : 'teamA';
+        const currentBatter = state[battingTeam].lineup[state[battingTeam].batterIndex];
+
+        let newBases = [null, null, null];
+        let newOuts = state.outs + 1;  // 타자 아웃
+        let runsScored = 0;
+        let runsToPitchers = [];
+        let newLogs = [...state.logs];
+        let newPlayEvents = [...state.playEvents];
+        let pitchingDelta = { inningsOuts: 1, strikeouts: 0, runsAllowed: 0, earnedRuns: 0,
+          hitsAllowed: 0, walksAllowed: 0, battersFaced: 1, errorRuns: 0 };
+
+        runnerChoices.forEach(rc => {
+          const choice = Number(rc.choice);
+          if (choice === 0) {
+            newOuts += 1;
+            pitchingDelta.inningsOuts += 1;
+            newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${rc.name} 태그아웃`);
+          } else if (choice >= 4) {
+            runsScored++;
+            runsToPitchers.push({ pitcherId: rc.runnerObj.respPitcher, earned: rc.runnerObj.isEarned });
+            newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${rc.name} 태그업 홈인`);
+          } else {
+            newBases[choice - 1] = rc.runnerObj;
+            if (choice > rc.base + 1)
+              newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${rc.name} 태그업 ${choice}루`);
+          }
+        });
+
+        const plateUpdates = {
+          label: '플라이 아웃', atBats: 1, hits: 0, homeRuns: 0, walks: 0,
+          strikeouts: 0, rbi: runsScored, runs: 0, steals: 0, errors: 0
+        };
+
+        runsToPitchers.forEach(r => {
+          state = addPitcherRuns(state, defenseTeam, r.pitcherId, 1, r.earned ? 1 : 0);
+        });
+
+        state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
+        state = applyPitchingEvent(state, defenseTeam, pitchingDelta);
+
+        let newBatterIndex = state[battingTeam].batterIndex;
+        if (state[battingTeam].lineup.length > 0)
+          newBatterIndex = (newBatterIndex + 1) % state[battingTeam].lineup.length;
+
+        newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 플라이 아웃${runsScored > 0 ? ` (+${runsScored}득점)` : ''}`);
+        newPlayEvents.unshift(`${currentBatter?.name || '타자'} 플라이 아웃`);
+
+        state = {
+          ...state,
+          outs: newOuts,
+          bases: newBases,
+          logs: newLogs,
+          playEvents: newPlayEvents,
+          [battingTeam]: {
+            ...state[battingTeam],
+            score: state[battingTeam].score + runsScored,
+            batterIndex: newBatterIndex
+          }
+        };
+        state = advanceInningScore(state, battingTeam, runsScored);
+
+        let newInning = state.inning, newHalf = state.half;
+        if (state.outs >= 3) {
+          newLogs.unshift(`[${newInning}회${isTop ? '초' : '말'} 종료] 쓰리아웃 공수교대`);
+          if (newHalf === 'top') newHalf = 'bottom';
+          else { newHalf = 'top'; newInning += 1; }
+          state = { ...state, inning: newInning, half: newHalf, outs: 0,
+                    bases: [null, null, null], logs: newLogs };
+        }
+        return state;
+      });
+    });
   };
 
   const handleSacAction = (actionLabel) => {
@@ -3502,10 +3700,10 @@ const confirmEndGame = () => {
                       <button onClick={() => handleGameAction('낫아웃 출루', false, 1)} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl shadow transition-colors">낫아웃 출루</button>
                       
                       <button onClick={() => handleGameAction('실책 출루', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">실책 출루</button>
-                      <button onClick={() => handleGameAction('야수선택', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">야수선택 (FC)</button>
-                      
+                      <button onClick={() => handleFCAction()} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">야수선택 (FC)</button>
+
                       <button onClick={() => handleGroundOutAction('땅볼 아웃', 1)} className="bg-red-500 hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">땅볼 아웃</button>
-                      <button onClick={() => handleGameAction('플라이 아웃', true, 0)} className="bg-red-500 hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">플라이 아웃</button>
+                      <button onClick={() => handleFlyOutAction()} className="bg-red-500 hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">플라이 아웃</button>
                       <button onClick={() => handleGroundOutAction('병살타', 2)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">병살타 (DP)</button>
                       <button onClick={() => handleGameAction('삼진', true, 0)} className="bg-red-700 hover:bg-red-800 text-white font-black py-4 rounded-xl shadow transition-colors mt-2">삼진 (K)</button>
                       <button onClick={() => handleSacAction('희생번트')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">희생번트</button>
@@ -4230,6 +4428,85 @@ const confirmEndGame = () => {
               >
                 확인
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingFC && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setPendingFC(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-black text-gray-800 mb-1">야수선택 (FC) - 주자 처리</h3>
+            <p className="text-sm text-gray-600 mb-4">타자는 1루에 출루합니다. 각 주자를 어떻게 처리할까요?</p>
+            <div className="space-y-3">
+              {pendingFC.runners.map((r, idx) => (
+                <div key={`fc-runner-${idx}`} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                  <div className="font-bold text-gray-800 mb-2">
+                    <span className="inline-block bg-yellow-400 text-black text-xs font-black px-2 py-0.5 rounded mr-2">{r.base + 1}B</span>
+                    {r.name}
+                    {r.choice === 0 && <span className="ml-2 text-xs text-red-500 font-bold">(기본 아웃)</span>}
+                  </div>
+                  <select
+                    value={r.choice}
+                    onChange={(e) => {
+                      const next = [...pendingFC.runners];
+                      next[idx] = { ...next[idx], choice: Number(e.target.value) };
+                      setPendingFC({ ...pendingFC, runners: next });
+                    }}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium outline-none focus:ring-2 focus:ring-slate-800"
+                  >
+                    {getRunnerAdvanceOptions(r.base, 1).map(opt => (
+                      <option key={`fc-opt-${idx}-${opt.value}`} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setPendingFC(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors">취소</button>
+              <button
+                onClick={() => { const { runners } = pendingFC; setPendingFC(null); executeFCResolution(runners); }}
+                className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors"
+              >확인</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingTagup && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setPendingTagup(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-black text-gray-800 mb-1">플라이 아웃 - 태그업</h3>
+            <p className="text-sm text-gray-600 mb-4">타자는 아웃됩니다. 각 주자의 태그업 여부를 선택하세요.</p>
+            <div className="space-y-3">
+              {pendingTagup.runners.map((r, idx) => (
+                <div key={`tagup-runner-${idx}`} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                  <div className="font-bold text-gray-800 mb-2">
+                    <span className="inline-block bg-yellow-400 text-black text-xs font-black px-2 py-0.5 rounded mr-2">{r.base + 1}B</span>
+                    {r.name}
+                  </div>
+                  <select
+                    value={r.choice}
+                    onChange={(e) => {
+                      const next = [...pendingTagup.runners];
+                      next[idx] = { ...next[idx], choice: Number(e.target.value) };
+                      setPendingTagup({ ...pendingTagup, runners: next });
+                    }}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium outline-none focus:ring-2 focus:ring-slate-800"
+                  >
+                    {getRunnerAdvanceOptions(r.base, 1).map(opt => (
+                      <option key={`tagup-opt-${idx}-${opt.value}`} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setPendingTagup(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors">취소</button>
+              <button
+                onClick={() => { const { runners } = pendingTagup; setPendingTagup(null); executeFlyOutWithTagup(runners); }}
+                className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors"
+              >확인</button>
             </div>
           </div>
         </div>
