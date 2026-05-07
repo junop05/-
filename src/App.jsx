@@ -1081,15 +1081,20 @@ const allPlayers = useMemo(() => players, [players]);
         setGameState(prev => {
           const safePrev = normalizeGameStateForTracking(prev);
           let newLogs = [...safePrev.logs];
-          newLogs.unshift(`[투수 교체] ${safePrev[teamKey].name} : ${safePrev[teamKey].pitcher.name} → ${newPitcher.name}`);
-          
+          const prevPitcherName = safePrev[teamKey].pitcher?.name;
+          if (prevPitcherName) {
+            newLogs.unshift(`[투수 교체] ${safePrev[teamKey].name} : ${prevPitcherName} → ${newPitcher.name}`);
+          } else {
+            newLogs.unshift(`[선발 투수] ${safePrev[teamKey].name} : ${newPitcher.name}`);
+          }
+
           // 새 투수가 라인업에 있다면 해당 슬롯의 assignedPosition을 '투수'로 갱신
           const updatedLineup = (safePrev[teamKey].lineup || []).map(p =>
             String(p.id) === String(newPitcherIdRaw)
               ? { ...p, assignedPosition: '투수' }
               : p
           );
-          
+
           return {
             ...safePrev,
             logs: newLogs,
@@ -1099,7 +1104,7 @@ const allPlayers = useMemo(() => players, [players]);
               pitcher: newPitcher,
               pitcherId: newPitcherIdRaw,
               pitcherAppearances: [
-                ...safePrev[teamKey].pitcherAppearances,
+                ...(safePrev[teamKey].pitcherAppearances || []),
                 {
                   pitcherId: newPitcher.id,
                   pitcherName: newPitcher.name,
@@ -1270,6 +1275,7 @@ const allPlayers = useMemo(() => players, [players]);
   };
 
   const registerPlateAppearance = (state, battingTeamKey, currentBatter, updates) => {
+    if (!currentBatter) return state;
     const nextTeam = { ...state[battingTeamKey] };
     nextTeam.lineup = nextTeam.lineup.map(player => {
       if (player.id !== currentBatter.id) return player;
@@ -1309,8 +1315,8 @@ const allPlayers = useMemo(() => players, [players]);
   };
 
   const addPitcherRuns = (state, defenseTeam, pitcherId, runs, earned) => {
-    const nextState = { ...state };
-    nextState[defenseTeam].pitcherAppearances = nextState[defenseTeam].pitcherAppearances.map(app => {
+    const team = state[defenseTeam];
+    const updatedAppearances = (team.pitcherAppearances || []).map(app => {
       if (app.pitcherId === pitcherId) {
         return {
           ...app,
@@ -1323,9 +1329,19 @@ const allPlayers = useMemo(() => players, [players]);
       }
       return app;
     });
-    nextState[defenseTeam].pitcherGameStats.runsAllowed += runs;
-    nextState[defenseTeam].pitcherGameStats.earnedRuns += earned;
-    return nextState;
+    const prevPitchingStats = team.pitcherGameStats || { inningsOuts: 0, strikeouts: 0, runsAllowed: 0, earnedRuns: 0, hitsAllowed: 0, walksAllowed: 0, battersFaced: 0, errorRuns: 0 };
+    return {
+      ...state,
+      [defenseTeam]: {
+        ...team,
+        pitcherAppearances: updatedAppearances,
+        pitcherGameStats: {
+          ...prevPitchingStats,
+          runsAllowed: (prevPitchingStats.runsAllowed || 0) + runs,
+          earnedRuns: (prevPitchingStats.earnedRuns || 0) + earned
+        }
+      }
+    };
   };
 
   const getRunnerAdvanceOptions = (runnerBase, basesToAdvance) => {
@@ -1500,7 +1516,7 @@ const allPlayers = useMemo(() => players, [players]);
             if (nextBase > 3) processRunnerScoring(runnerObj);
             else newBases[nextBase - 1] = runnerObj;
           });
-          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: false };
+          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: false };
         
         } else if (isFielderChoice) {
           const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
@@ -1521,7 +1537,7 @@ const allPlayers = useMemo(() => players, [players]);
             else newBases[nextBase - 1] = runnerObj;
           });
 
-          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: true };
           newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - 야수선택 출루 (선행주자 아웃)`);
           newPlayEvents.unshift(`${currentBatter?.name || '타자'} 야수선택`);
 
@@ -1565,7 +1581,7 @@ const allPlayers = useMemo(() => players, [players]);
             if (first && second && third) processRunnerScoring(third);
             newBases[2] = second && first ? second : third;
             newBases[1] = first ? first : second;
-            newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+            newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: true };
             if (actionLabel === '볼넷' || actionLabel === '사구') pitchingDelta.walksAllowed += 1;
              if (isDroppedThirdStrike) pitchingDelta.strikeouts += 1;
           } else {
@@ -1598,14 +1614,14 @@ const allPlayers = useMemo(() => players, [players]);
 
             if (basesToAdvance > 3) {
               runsScored++;
-              runsToPitchers.push({ pitcherId: currentPitcher.id, earned: true });
+              runsToPitchers.push({ pitcherId: currentPitcher?.id, earned: true });
               plateUpdates.runs = 1;
             } else {
               // 타자가 갈 베이스에 주자가 있으면 덮어쓰기 전에 경고용 log
               if (newBases[basesToAdvance - 1]) {
                 newLogs.unshift(`[경고] ${basesToAdvance}루 주자 충돌 - 주자 선택을 다시 확인하세요.`);
               }
-              newBases[basesToAdvance - 1] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+              newBases[basesToAdvance - 1] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: true };
             }
             if (countAsHit) pitchingDelta.hitsAllowed += 1;
           }
@@ -1748,7 +1764,7 @@ const allPlayers = useMemo(() => players, [players]);
         });
 
         // 타자는 무조건 1루 (단, 1루가 이미 점유됐으면 덮어씀 — 사용자가 선택에서 비워야 함)
-        newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher.id, isEarned: true };
+        newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: true };
 
         const plateUpdates = {
           label: '야수선택', atBats: 1, hits: 0, homeRuns: 0, walks: 0,
@@ -2387,7 +2403,7 @@ const confirmEndGame = () => {
         if (!prev) return prev;
         const newBases = [...prev.bases];
         const defenseTeam = prev.half === 'top' ? 'teamB' : 'teamA';
-        newBases[0] = { name: playerName, respPitcher: prev[defenseTeam].pitcher.id, isEarned: false };
+        newBases[0] = { name: playerName, respPitcher: prev[defenseTeam].pitcher?.id, isEarned: false };
         const isTop = prev.half === 'top';
         return {
           ...prev,
