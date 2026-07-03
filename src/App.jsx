@@ -1022,18 +1022,10 @@ const allPlayers = useMemo(() => players, [players]);
         };
       });
 
-/* [PATCH] pitcher-in-lineup */
-      // 투수가 타순에 없으면 자동으로 마지막 타순에 추가 (옵션 A)
-      const pitcherAlreadyInLineup = mappedLineup.some(
-        (p) => String(p.id) === String(pitcherRawId)
-      );
-      if (!pitcherAlreadyInLineup && pitcher) {
-        mappedLineup.push({
-          ...pitcher,
-          assignedPosition: pitcher.position || '1',
-          gameStats: {}
-        });
-      }
+      // 투수 타격 여부는 사용자가 타순에 직접 넣어 결정한다.
+      // (타자 선택 드롭다운에 투수도 포함되어 있으므로 원하는 타순 자리에 배치 가능)
+      // 타순에 넣지 않으면 지명타자처럼 투수는 타석에 들어가지 않는다.
+      // 자동으로 10번에 강제 추가하던 로직을 제거해 타순 밀림을 방지한다.
       newTeams[team] = {
         ...gameState[team],
         pitcher: pitcher,
