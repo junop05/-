@@ -321,6 +321,8 @@ export default function App() {
   // { actionLabel: '병살타'|'땅볼 아웃', runners: [...], totalOuts: number }
   const [pendingFC, setPendingFC] = useState(null);
   // { runners: [{ base, name, runnerObj, choice }] }  — 타자는 무조건 1루
+  const [pendingError, setPendingError] = useState(null);
+  // { position: string|null, batterName, batterBase: 1~4, runners: [{ base, name, runnerObj, choice }] }
   const [pendingTagup, setPendingTagup] = useState(null);
   // { runners: [{ base, name, runnerObj, choice }] }  — 타자는 아웃
   const [pitcherSwapAsk, setPitcherSwapAsk] = useState(null);
@@ -1433,6 +1435,21 @@ const allPlayers = useMemo(() => players, [players]);
     setLineupDraft([]);
   };
 
+  const handleErrorAction = (position) => {
+    if (!gameState) return;
+    const battingTeam = gameState.half === 'top' ? gameState.teamA : gameState.teamB;
+    const batterName = battingTeam?.lineup?.[battingTeam?.batterIndex]?.name || '타자';
+    const runners = gameState.bases
+      .map((r, i) => r ? {
+        base: i,
+        name: r.name,
+        runnerObj: r,
+        choice: Math.min(i + 2, 4)
+      } : null)
+      .filter(Boolean);
+    setPendingError({ position, batterName, batterBase: 1, runners });
+  };
+
   const handleGameAction = (actionLabel, isOut, basesToAdvance, runnerChoices = null) => {
     const isHit = ['안타', '2루타', '3루타'].includes(actionLabel);
     const hasRunners = gameState && gameState.bases.some(b => b !== null);
@@ -1467,7 +1484,7 @@ const allPlayers = useMemo(() => players, [players]);
         let runsScored = 0;
         let runsToPitchers = [];
 
-        const isErrorPlay = actionLabel.startsWith('실책-');
+        const isErrorPlay = actionLabel.startsWith('실책-') || actionLabel === '실책 출루';
         const isFielderChoice = actionLabel === '야수선택';
         const isDoublePlay = actionLabel === '병살타';
         const isDroppedThirdStrike = actionLabel === '낫아웃 출루';
@@ -1494,21 +1511,52 @@ const allPlayers = useMemo(() => players, [players]);
         };
 
         if (isErrorPlay) {
-          const position = actionLabel.replace('실책-', '');
-          plateUpdates.label = `${position} 실책`;
+          const position = actionLabel === '실책 출루' ? null : actionLabel.replace('실책-', '');
+          plateUpdates.label = position ? `${position} 실책` : '실책 출루';
           plateUpdates.atBats = 1;
           state = incrementDefenseError(state, defenseTeam, position);
-          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${position} 실책으로 출루`);
-          newPlayEvents.unshift(`${position} 실책`);
 
           const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
           newBases = [null, null, null];
-          runnersOn.forEach(({ runnerObj, base }) => {
-            const nextBase = base + 1;
-            if (nextBase > 3) processRunnerScoring(runnerObj);
-            else newBases[nextBase - 1] = runnerObj;
-          });
-          newBases[0] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: false };
+
+          if (runnerChoices && runnerChoices.length > 0) {
+            // 사용자가 직접 선택한 주자 결과 적용 (잔류/진루/득점/주루사)
+            runnerChoices.forEach((rc) => {
+              const choice = Number(rc.choice);
+              if (choice === 0) {
+                newOuts += 1;
+                pitchingDelta.inningsOuts += 1;
+                newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${rc.name} 주루사 (아웃)`);
+                newPlayEvents.unshift(`${rc.name} 주루사`);
+              } else if (choice >= 4) {
+                processRunnerScoring(rc.runnerObj);
+              } else {
+                newBases[choice - 1] = rc.runnerObj;
+              }
+            });
+          } else {
+            // fallback: 전 주자 1베이스 자동 진루
+            runnersOn.forEach(({ runnerObj, base }) => {
+              const nextBase = base + 1;
+              if (nextBase > 3) processRunnerScoring(runnerObj);
+              else newBases[nextBase - 1] = runnerObj;
+            });
+          }
+
+          const batterBase = Math.min(Math.max(Number(basesToAdvance) || 1, 1), 4);
+          if (batterBase >= 4) {
+            runsScored++;
+            runsToPitchers.push({ pitcherId: currentPitcher?.id, earned: false });
+            plateUpdates.runs = 1;
+          } else {
+            if (newBases[batterBase - 1]) {
+              newLogs.unshift(`[경고] ${batterBase}루 주자 충돌 - 주자 선택을 다시 확인하세요.`);
+            }
+            newBases[batterBase - 1] = { name: currentBatter?.name, respPitcher: currentPitcher?.id, isEarned: false };
+          }
+
+          newLogs.unshift(`[${state.inning}회${isTop ? '초' : '말'}] ${currentBatter?.name || '타자'} - ${position ? `${position} ` : ''}실책으로 출루${batterBase >= 4 ? ' (홈인)' : batterBase > 1 ? ` (${batterBase}루까지)` : ''}${runsScored > 0 ? ' (+' + runsScored + '득점)' : ''}`);
+          newPlayEvents.unshift(position ? `${position} 실책` : '실책 출루');
         
         } else if (isFielderChoice) {
           const runnersOn = newBases.map((r, i) => r ? { runnerObj: r, base: i + 1 } : null).filter(Boolean);
@@ -1623,7 +1671,8 @@ const allPlayers = useMemo(() => players, [players]);
         }
 
         newScore += runsScored;
-        plateUpdates.rbi = runsScored;
+        // 실책으로 인한 득점은 타점으로 기록하지 않음
+        plateUpdates.rbi = isErrorPlay ? 0 : runsScored;
 
         runsToPitchers.forEach(run => {
           state = addPitcherRuns(state, defenseTeam, run.pitcherId, 1, run.earned ? 1 : 0);
@@ -3707,7 +3756,7 @@ const confirmEndGame = () => {
                       <button onClick={() => handleGameAction('사구', false, 1)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl shadow transition-colors">사구 (HBP)</button>
                       <button onClick={() => handleGameAction('낫아웃 출루', false, 1)} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl shadow transition-colors">낫아웃 출루</button>
                       
-                      <button onClick={() => handleGameAction('실책 출루', false, 1)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">실책 출루</button>
+                      <button onClick={() => handleErrorAction(null)} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">실책 출루</button>
                       <button onClick={() => handleFCAction()} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-xl shadow transition-colors">야수선택 (FC)</button>
 
                       <button onClick={() => handleGroundOutAction('땅볼 아웃', 1)} className="bg-red-500 hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">땅볼 아웃</button>
@@ -3718,10 +3767,10 @@ const confirmEndGame = () => {
                       <button onClick={() => handleSacAction('희생플라이')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-4 rounded-xl shadow transition-colors mt-2">희생플라이</button>
 
                       <div className="col-span-2 sm:col-span-3 mt-4 pt-4 border-t border-gray-200">
-                        <p className="text-xs text-gray-500 font-bold mb-2">실책 기록 (클릭 시 타자 1루 진루 및 해당 야수 실책 기록)</p>
+                        <p className="text-xs text-gray-500 font-bold mb-2">실책 기록 (야수 클릭 시 해당 야수에게 실책이 기록되고, 타자·주자의 진루를 직접 선택할 수 있습니다)</p>
                         <div className="flex flex-wrap gap-2">
                           {['투수','포수','1루수','2루수','3루수','유격수','좌익수','중견수','우익수'].map(pos => (
-                            <button key={`err-btn-${pos}`} onClick={() => handleGameAction(`실책-${pos}`, false, 1)} className="bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-3 rounded-lg border border-gray-300 transition-colors text-xs flex-1 min-w-[70px]">
+                            <button key={`err-btn-${pos}`} onClick={() => handleErrorAction(pos)} className="bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-3 rounded-lg border border-gray-300 transition-colors text-xs flex-1 min-w-[70px]">
                               {pos}
                             </button>
                           ))}
@@ -4324,6 +4373,77 @@ const confirmEndGame = () => {
                   const bta = pendingHit.basesToAdvance;
                   setPendingHit(null);
                   handleGameAction(action, false, bta, choices);
+                }}
+                className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors"
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingError && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setPendingError(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-black text-gray-800 mb-1">{pendingError.position ? `${pendingError.position} 실책` : '실책 출루'} - 주자 처리</h3>
+            <p className="text-sm text-gray-500 mb-5">타자와 각 주자가 실제로 도달한 베이스를 선택해주세요.</p>
+            <div className="space-y-3">
+              <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
+                <div className="font-bold text-gray-800 mb-2">
+                  <span className="inline-block bg-slate-800 text-white text-xs font-black px-2 py-0.5 rounded mr-2">타자</span>
+                  {pendingError.batterName}
+                </div>
+                <select
+                  value={pendingError.batterBase}
+                  onChange={(e) => setPendingError({ ...pendingError, batterBase: Number(e.target.value) })}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white font-medium"
+                >
+                  <option value={1}>1루 출루</option>
+                  <option value={2}>2루까지 진루</option>
+                  <option value={3}>3루까지 진루</option>
+                  <option value={4}>홈인 (득점)</option>
+                </select>
+              </div>
+              {pendingError.runners.map((r, idx) => (
+                <div key={`error-runner-${idx}`} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                  <div className="font-bold text-gray-800 mb-2">
+                    <span className="inline-block bg-yellow-400 text-black text-xs font-black px-2 py-0.5 rounded mr-2">
+                      {r.base + 1}B
+                    </span>
+                    {r.name}
+                  </div>
+                  <select
+                    value={r.choice}
+                    onChange={(e) => {
+                      const next = [...pendingError.runners];
+                      next[idx] = { ...next[idx], choice: Number(e.target.value) };
+                      setPendingError({ ...pendingError, runners: next });
+                    }}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white font-medium"
+                  >
+                    {getRunnerAdvanceOptions(r.base, 1).map(opt => (
+                      <option key={`error-opt-${idx}-${opt.value}`} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 mt-4 text-xs text-amber-700">
+              💡 실책에 의한 출루·득점은 비자책으로 처리되며, 실책으로 인한 득점에는 타점이 기록되지 않습니다.
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setPendingError(null)}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  const { position, batterBase, runners } = pendingError;
+                  setPendingError(null);
+                  handleGameAction(position ? `실책-${position}` : '실책 출루', false, batterBase, runners);
                 }}
                 className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors"
               >
