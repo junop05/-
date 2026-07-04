@@ -1532,6 +1532,47 @@ const allPlayers = useMemo(() => players, [players]);
     return { ...state, [defenseTeamKey]: nextTeam };
   };
 
+  // 가이드형 수비 순서 → 자살(PO)/보살(A) 크레딧 계산
+  // fielding: { fielderPos, outMethod('direct'|'throw'), throwTo, throwTo2 }
+  // 규칙(공식 기록): 송구 체인의 마지막 (아웃 수)명 = 자살, 마지막 1명 제외 전원 = 보살
+  //   예) 6-3 단일아웃 → 유격수 보살, 1루수 자살 / 직접(3U) → 1루수 자살(무보살)
+  //       6-4-3 병살  → 유격수 보살, 2루수 자살+보살, 1루수 자살
+  const buildFieldingCredits = (fielding, totalOuts = 1) => {
+    if (!fielding || !fielding.fielderPos) return [];
+    const { fielderPos, outMethod, throwTo, throwTo2 } = fielding;
+    let chain;
+    if (outMethod === 'direct') {
+      chain = [fielderPos];                       // 직접 태그/베이스 밟음 → 무보살 자살
+    } else {
+      chain = [fielderPos];
+      if (throwTo) chain.push(throwTo);
+      if (totalOuts >= 2 && throwTo2) chain.push(throwTo2);
+    }
+    const n = chain.length;
+    const k = Math.max(1, Math.min(totalOuts, n)); // 자살 인원 = 아웃 수 (체인 길이로 클램프)
+    const credits = {};
+    const add = (pos, po, as) => {
+      if (!pos) return;
+      if (!credits[pos]) credits[pos] = { putouts: 0, assists: 0 };
+      credits[pos].putouts += po;
+      credits[pos].assists += as;
+    };
+    for (let i = n - k; i < n; i++) add(chain[i], 1, 0); // 자살: 마지막 k명
+    for (let i = 0; i < n - 1; i++) add(chain[i], 0, 1); // 보살: 송구한(마지막 제외) 전원
+    return Object.entries(credits).map(([position, v]) => ({ position, ...v }));
+  };
+
+  // 수비 크레딧을 한 줄 요약 (모달 미리보기용): "유격수 보살, 1루수 자살"
+  const fieldingCreditSummary = (fielding, totalOuts = 1) => {
+    const parts = buildFieldingCredits(fielding, totalOuts).map(c => {
+      const seg = [];
+      if (c.putouts) seg.push(`자살${c.putouts > 1 ? `×${c.putouts}` : ''}`);
+      if (c.assists) seg.push(`보살${c.assists > 1 ? `×${c.assists}` : ''}`);
+      return `${c.position} ${seg.join('·')}`;
+    });
+    return parts.length ? parts.join(', ') : '수비 기록 없음';
+  };
+
   const addPitcherRuns = (state, defenseTeam, pitcherId, runs, earned) => {
     const team = state[defenseTeam];
     // 같은 투수가 두 번 등판한 경우 마지막 등판 기록에만 반영 (이중 집계 방지)
@@ -2142,16 +2183,12 @@ const allPlayers = useMemo(() => players, [players]);
   };
 
   const handleFlyOutAction = () => {
-    const hasRunners = gameState && gameState.bases.some(b => b !== null);
-    if (!hasRunners) {
-      handleGameAction('플라이 아웃', true, 0);
-      return;
-    }
-    const runners = gameState.bases.map((r, i) => r ? {
+    // 주자가 없어도 모달을 열어 포구 야수(자살)를 기록 — 수비율 반영
+    const runners = (gameState?.bases || []).map((r, i) => r ? {
       base: i, name: r.name, runnerObj: r,
       choice: i + 1  // 기본값: 잔류
     } : null).filter(Boolean);
-    setPendingTagup({ runners });
+    setPendingTagup({ runners, fielderPos: '' });
   };
 
   const executeFlyOutWithTagup = (runnerChoices, fielderPos = null) => {
@@ -2363,21 +2400,22 @@ const allPlayers = useMemo(() => players, [players]);
   };
 
   const handleGroundOutAction = (actionLabel, totalOuts) => {
-    const hasRunners = gameState && gameState.bases.some(b => b !== null);
-    if (!hasRunners) {
-      // 주자 없으면 단순 아웃 (병살타도 이 경우 1아웃)
-      handleGameAction(actionLabel, true, 0);
-      return;
-    }
-    const runners = gameState.bases.map((r, i) => r ? {
+    const runners = (gameState?.bases || []).map((r, i) => r ? {
       base: i, name: r.name, runnerObj: r,
       // 기본값: 한 베이스 진루
       choice: Math.min(i + 2, 4)
     } : null).filter(Boolean);
-    setPendingGroundOut({ actionLabel, runners, totalOuts });
+    // 아웃 수는 최대 (주자 수 + 타자)로 제한 — 주자 없이 병살은 불가하므로 1아웃으로 강등
+    const effectiveOuts = Math.min(totalOuts, runners.length + 1);
+    // 주자가 없어도 모달을 열어 수비(자살/보살)를 기록 — 수비율 반영
+    setPendingGroundOut({
+      actionLabel: effectiveOuts < 2 && actionLabel === '병살타' ? '땅볼 아웃' : actionLabel,
+      runners, totalOuts: effectiveOuts,
+      fielderPos: '', outMethod: 'throw', throwTo: '1루수', throwTo2: ''
+    });
   };
 
-  const executeGroundOutResolution = (actionLabel, runnerChoices, totalOuts, fielderPos = null) => {
+  const executeGroundOutResolution = (actionLabel, runnerChoices, totalOuts, fielding = null) => {
     executeWithHistory(() => {
       setGameState(prev => {
         let state = normalizeGameStateForTracking(prev);
@@ -2438,14 +2476,10 @@ const allPlayers = useMemo(() => players, [players]);
 
         state = registerPlateAppearance(state, battingTeam, currentBatter, plateUpdates);
         state = creditRunsToRunners(state, battingTeam, scoringRunners);
-        if (fielderPos) {
-          // 땅볼: 처리 야수 보살 + 1루수 자살 (1루수 직접 처리 시 자살만)
-          if (fielderPos === '1루수') state = creditFielding(state, defenseTeam, '1루수', { putouts: 1 });
-          else {
-            state = creditFielding(state, defenseTeam, fielderPos, { assists: 1 });
-            state = creditFielding(state, defenseTeam, '1루수', { putouts: 1 });
-          }
-        }
+        // 땅볼 수비 기록: 처리 야수 → 송구/직접에 따라 자살·보살을 순서대로 적립
+        buildFieldingCredits(fielding, totalOuts).forEach(c => {
+          state = creditFielding(state, defenseTeam, c.position, { putouts: c.putouts, assists: c.assists });
+        });
         // 반이닝 잔여 아웃보다 많이 기록되지 않도록 클램프 (투수 이닝 과다 계상 방지)
         pitchingDelta.inningsOuts = Math.min(pitchingDelta.inningsOuts, Math.max(0, 3 - state.outs));
         state = applyPitchingEvent(state, defenseTeam, pitchingDelta);
@@ -4979,23 +5013,79 @@ const confirmEndGame = async () => {
       {pendingGroundOut && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setPendingGroundOut(null)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-xl font-black text-gray-800 mb-3">{pendingGroundOut.actionLabel} - 주자 처리</h3>
+            <h3 className="text-xl font-black text-gray-800 mb-3">{pendingGroundOut.actionLabel} - {pendingGroundOut.runners.length > 0 ? '주자 처리' : '수비 기록'}</h3>
             <p className="text-sm text-gray-600 mb-4">
               타자는 아웃됩니다{pendingGroundOut.totalOuts === 2 ? ' (병살: 추가 1아웃 자동 포함)' : ''}.
-              각 주자의 결과를 선택하세요.
+              {pendingGroundOut.runners.length > 0 ? ' 각 주자의 결과를 선택하세요.' : ' 수비한 야수를 기록하세요.'}
             </p>
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-4">
-              <label className="block text-xs font-bold text-gray-500 mb-1">타구 처리 야수 (수비 기록용, 선택)</label>
-              <select
-                value={pendingGroundOut.fielderPos || ''}
-                onChange={(e) => setPendingGroundOut({ ...pendingGroundOut, fielderPos: e.target.value })}
-                className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium outline-none focus:ring-2 focus:ring-slate-800"
-              >
-                <option value="">기록 안 함</option>
-                {['투수', '포수', '1루수', '2루수', '3루수', '유격수'].map(pos => (
-                  <option key={`go-f-${pos}`} value={pos}>{pos}</option>
-                ))}
-              </select>
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-4 space-y-3">
+              <label className="block text-xs font-bold text-gray-500">수비 기록 (수비율 반영, 선택)</label>
+              {/* ① 타구 처리 야수 */}
+              <div>
+                <span className="block text-xs font-semibold text-gray-600 mb-1">① 타구 처리 야수 (누가 잡았나)</span>
+                <select
+                  value={pendingGroundOut.fielderPos || ''}
+                  onChange={(e) => setPendingGroundOut({ ...pendingGroundOut, fielderPos: e.target.value })}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium outline-none focus:ring-2 focus:ring-slate-800"
+                >
+                  <option value="">기록 안 함</option>
+                  {['투수', '포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수'].map(pos => (
+                    <option key={`go-f-${pos}`} value={pos}>{pos}</option>
+                  ))}
+                </select>
+              </div>
+              {/* ② 처리 방식: 직접 아웃 vs 송구 */}
+              {pendingGroundOut.fielderPos && (
+                <div>
+                  <span className="block text-xs font-semibold text-gray-600 mb-1">② 아웃 처리 방식</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPendingGroundOut({ ...pendingGroundOut, outMethod: 'direct' })}
+                      className={`py-2 px-2 rounded-lg text-sm font-bold border transition-colors ${pendingGroundOut.outMethod === 'direct' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+                    >직접 아웃<br /><span className="text-[10px] font-medium opacity-80">(베이스 밟음/태그)</span></button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingGroundOut({ ...pendingGroundOut, outMethod: 'throw' })}
+                      className={`py-2 px-2 rounded-lg text-sm font-bold border transition-colors ${pendingGroundOut.outMethod === 'throw' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+                    >송구 아웃<br /><span className="text-[10px] font-medium opacity-80">(던져서 아웃)</span></button>
+                  </div>
+                </div>
+              )}
+              {/* ③ 송구 대상 (자살) */}
+              {pendingGroundOut.fielderPos && pendingGroundOut.outMethod === 'throw' && (
+                <div>
+                  <span className="block text-xs font-semibold text-gray-600 mb-1">③ 송구 받은 야수 (자살)</span>
+                  <select
+                    value={pendingGroundOut.throwTo || ''}
+                    onChange={(e) => setPendingGroundOut({ ...pendingGroundOut, throwTo: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium outline-none focus:ring-2 focus:ring-slate-800"
+                  >
+                    {['투수', '포수', '1루수', '2루수', '3루수', '유격수'].map(pos => (
+                      <option key={`go-t-${pos}`} value={pos}>{pos}</option>
+                    ))}
+                  </select>
+                  {/* ④ 병살: 두 번째 송구 대상 */}
+                  {pendingGroundOut.totalOuts === 2 && (
+                    <div className="mt-2">
+                      <span className="block text-xs font-semibold text-gray-600 mb-1">④ 두 번째 송구 받은 야수 (병살 완성, 자살)</span>
+                      <select
+                        value={pendingGroundOut.throwTo2 || ''}
+                        onChange={(e) => setPendingGroundOut({ ...pendingGroundOut, throwTo2: e.target.value })}
+                        className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium outline-none focus:ring-2 focus:ring-slate-800"
+                      >
+                        <option value="">없음</option>
+                        {['투수', '포수', '1루수', '2루수', '3루수', '유격수'].map(pos => (
+                          <option key={`go-t2-${pos}`} value={pos}>{pos}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+              {pendingGroundOut.fielderPos && (
+                <p className="text-[11px] text-slate-600 font-semibold pt-1">→ {fieldingCreditSummary(pendingGroundOut, pendingGroundOut.totalOuts)}</p>
+              )}
             </div>
             <div className="space-y-3">
               {pendingGroundOut.runners.map((r, idx) => (
@@ -5031,9 +5121,9 @@ const confirmEndGame = async () => {
               </button>
               <button
                 onClick={() => {
-                  const { actionLabel, runners, totalOuts } = pendingGroundOut;
+                  const { actionLabel, runners, totalOuts, fielderPos, outMethod, throwTo, throwTo2 } = pendingGroundOut;
                   setPendingGroundOut(null);
-                  executeGroundOutResolution(actionLabel, runners, totalOuts, pendingGroundOut.fielderPos || null);
+                  executeGroundOutResolution(actionLabel, runners, totalOuts, fielderPos ? { fielderPos, outMethod, throwTo, throwTo2 } : null);
                 }}
                 className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-colors"
               >
@@ -5087,10 +5177,10 @@ const confirmEndGame = async () => {
       {pendingTagup && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4" onClick={() => setPendingTagup(null)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-xl font-black text-gray-800 mb-1">플라이 아웃 - 태그업</h3>
-            <p className="text-sm text-gray-600 mb-4">타자는 아웃됩니다. 각 주자의 태그업 여부를 선택하세요.</p>
+            <h3 className="text-xl font-black text-gray-800 mb-1">플라이 아웃 - {pendingTagup.runners.length > 0 ? '태그업' : '수비 기록'}</h3>
+            <p className="text-sm text-gray-600 mb-4">타자는 아웃됩니다.{pendingTagup.runners.length > 0 ? ' 각 주자의 태그업 여부를 선택하세요.' : ' 포구한 야수를 기록하세요.'}</p>
             <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-4">
-              <label className="block text-xs font-bold text-gray-500 mb-1">포구 야수 (수비 기록용, 선택)</label>
+              <label className="block text-xs font-bold text-gray-500 mb-1">포구 야수 (자살, 수비율 반영)</label>
               <select
                 value={pendingTagup.fielderPos || ''}
                 onChange={(e) => setPendingTagup({ ...pendingTagup, fielderPos: e.target.value })}
