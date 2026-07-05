@@ -1118,6 +1118,16 @@ const allPlayers = useMemo(() => players, [players]);
         break;
       }
 
+      // 타순이 9명 미만이면 실수로 미완성 라인업(예: 투수 1명)으로 시작하는 것을 방지
+      // 하드 차단이 아닌 확인으로, 연습경기 등 의도적인 소수 인원 기록도 허용한다.
+      if (validBatters.length < 9) {
+        const teamLabel = gameState[team]?.name || '팀';
+        if (!window.confirm(`${teamLabel}의 타순에 ${validBatters.length}명만 입력되어 있습니다.\n정규 경기는 보통 9명이 필요합니다. 이대로 시작할까요?\n\n(투수도 타격하려면 타순 칸에 직접 넣어야 기록이 남습니다.)`)) {
+          hasError = true;
+          break;
+        }
+      }
+
       const mappedLineup = validBatters.map(b => {
         const player = players.find(p => String(p.id) === String(b.playerId));
         return {
@@ -4086,7 +4096,7 @@ const confirmEndGame = async () => {
                             <tr className="bg-slate-50">
                               <td className="p-3 text-center font-bold text-slate-700">선발 투수</td>
                               <td className="p-3">
-                                <select className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white" value={gameState[teamKey].pitcherId} onChange={(e) => requestPitcherChange(teamKey, e.target.value)}>
+                                <select className="w-full p-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-800 bg-white" value={gameState[teamKey].pitcherId} onChange={(e) => handlePitcherChange(teamKey, e.target.value)}>
                                   <option value="">투수 선택...</option>
                                   {players.map(p => <option key={`pitcher-opt-${p.id}`} value={p.id}>{p.name} (No.{p.uniformNumber}) {p.primaryRole !== '투수' ? `· ${p.primaryRole}` : ''}</option>)}
                                 </select>
