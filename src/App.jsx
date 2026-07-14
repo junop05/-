@@ -355,7 +355,13 @@ export default function App() {
       if (snap.empty) {
         defaultPlayersData.forEach(p => setDoc(doc(db, 'polaris_players', p.id.toString()), p));
       } else {
-        const loaded = snap.docs.map(d => d.data());
+        const loaded = snap.docs.map(d => {
+          const data = d.data();
+          return {
+            ...data,
+            id: data.id != null ? String(data.id) : d.id
+          };
+        });
         setPlayers(loaded.sort((a,b) => a.uniformNumber - b.uniformNumber));
       }
     });
