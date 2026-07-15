@@ -1633,6 +1633,20 @@ const allPlayers = useMemo(() => players, [players]);
 
   const openLineupChange = (teamKey) => {
     if (!gameState || !gameState[teamKey]) return;
+
+    // 정규 경기의 상대팀은 익명 placeholder(상대 타자1~9, id: opp-b*)로만 구성되며
+    // 폴라리스 로스터(players)에 존재하지 않는다. 이 모달의 선수 select는 실제
+    // 로스터만 옵션으로 표시하므로, 상대팀을 열면 매칭되는 옵션이 없어 모든 칸이
+    // 로스터 첫 선수(예: 김주원 No.1)로 잘못 표시된다. 게다가 여기서 실제 선수를
+    // 고르면 상대팀 라인업에 폴라리스 선수가 배정되어 기록이 오염되므로 원천 차단한다.
+    const isOpponentTeam = (gameState[teamKey].lineup || []).some(
+      (p) => String(p?.id).startsWith('opp-')
+    );
+    if (isOpponentTeam) {
+      alert('상대팀은 개별 선수 기록을 관리하지 않아 라인업 / 야수 교체를 할 수 없습니다.\n폴라리스 팀의 라인업만 변경할 수 있습니다.');
+      return;
+    }
+
     const draft = (gameState[teamKey].lineup || []).map((p) => ({
       currentId: p.id,
       newPlayerId: String(p.id),
@@ -4796,6 +4810,13 @@ const confirmEndGame = async () => {
                               value={slot.newPlayerId}
                               onChange={(e) => updateLineupDraft(idx, 'newPlayerId', e.target.value)}
                             >
+                              {/* 현재 슬롯 선수가 로스터에 없으면(예: 상대팀 placeholder)
+                                  첫 옵션으로 잘못 표시되는 것을 막기 위해 실제 현재 선수를 노출 */}
+                              {!players.some((p) => String(p.id) === String(slot.newPlayerId)) && (
+                                <option value={slot.newPlayerId}>
+                                  {orig?.name || '현재 선수'} (현재)
+                                </option>
+                              )}
                               {players.map((p) => (
                                 <option key={`lc-pl-${idx}-${p.id}`} value={p.id}>
                                   {p.name} (No.{p.uniformNumber}) {p.primaryRole}
