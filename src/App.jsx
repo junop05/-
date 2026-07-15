@@ -4184,7 +4184,7 @@ const confirmEndGame = async () => {
                           <Users size={14} /> 야수 교체
                         </button>
                         <button onClick={() => openLineupChange(gameState.half === 'top' ? 'teamA' : 'teamB')} className="flex items-center justify-center gap-2 min-w-[140px] bg-blue-600/25 hover:bg-blue-600/55 border border-blue-600/60 text-blue-100 text-sm font-semibold px-3 py-2 rounded-2xl transition-colors whitespace-nowrap leading-tight" title="공격측 라인업 변경">
-                          <Users size={14} /> 라인업 변경
+                          <Users size={14} /> 공격 라인업 변경
                         </button>
                       </div>
                     </div>
